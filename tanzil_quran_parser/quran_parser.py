@@ -15,10 +15,10 @@ import psycopg2
 
 TANZIL_QURAN_SOURCE_HASH = "a22c0d515c37a5667160765c2d1d171fa4b9d7d8778e47161bb0fe894cf61c1d"
 
-INSERTABLE_QURAN_MUSHAF_TABLE = "mushafs(id, name, source, bismillah_text)"
-INSERTABLE_QURAN_SURAH_TABLE = "quran_surahs(name, period, number, bismillah_status, bismillah_as_first_ayah, mushaf_id)"
-INSERTABLE_QURAN_WORDS_TABLE = "quran_words(ayah_id, word)"
-INSERTABLE_QURAN_AYAHS_TABLE = "quran_ayahs(surah_id, ayah_number, sajdeh)"
+INSERTABLE_QURAN_MUSHAF_TABLE = "mushafs(creator_user_id, id, name, source, bismillah_text)"
+INSERTABLE_QURAN_SURAH_TABLE = "quran_surahs(creator_user_id, name, period, number, bismillah_status, bismillah_as_first_ayah, mushaf_id)"
+INSERTABLE_QURAN_WORDS_TABLE = "quran_words(creator_user_id, ayah_id, word)"
+INSERTABLE_QURAN_AYAHS_TABLE = "quran_ayahs(creator_user_id, surah_id, ayah_number, sajdeh)"
 
 BISMILLAH = "بِسْمِ ٱللَّهِ ٱلرَّحْمَـٰنِ ٱلرَّحِيمِ"
 
@@ -46,10 +46,12 @@ sajdahs = {
 }
 
 def exit_err(msg):
-    exit("Error: " + msg)
+    print("Error: " + msg)
+    exit(1)
 
 def exit_usage():
-    exit("Usage: " + USAGE_TEXT)
+    print("Usage: " + USAGE_TEXT)
+    exit(1)
 
 # This will hash the source
 # and check it to be equal to
@@ -76,16 +78,18 @@ def parse_quran_suarhs_table(root, mushaf_id):
         first_ayah = root[surah_num - 1][0]
         if first_ayah.attrib['text'] == BISMILLAH:
             # also set the mushaf_id
+            # 1 is the creator_user_id
             result.append(
-                f"('{surah_name}', NULL, {surah_num}, true, true, {mushaf_id})")
+                f"(1, '{surah_name}', NULL, {surah_num}, true, true, {mushaf_id})")
 
         else:
             first_ayah_bismillah_status = first_ayah.get('bismillah', False)
 
             status = 'true' if first_ayah_bismillah_status != False else 'false'
 
+            # 1 is the creator_user_id
             result.append(
-                f"('{surah_name}', NULL, {surah_num}, '{status}', false, {mushaf_id})")
+                f"(1, '{surah_name}', NULL, {surah_num}, '{status}', false, {mushaf_id})")
 
         surah_num += 1
 
@@ -108,7 +112,8 @@ def parse_quran_words_table(root):
         words = ayahtext_without_sajdeh.split(" ")
 
         # Map and change every word to a specific format
-        values = list(map(lambda word: f"({ayah_number}, '{word}')", words))
+        # 1 is the creator_user_id
+        values = list(map(lambda word: f"(1, {ayah_number}, '{word}')", words))
 
         # Join the values with ,\n
         result.append(",\n".join(values))
@@ -122,7 +127,7 @@ def parse_quran_words_table(root):
 # This will parse the quran-ayahs table
 def parse_quran_ayahs_table(root):
     result = []
-    sura_number = 0
+    surah_number = 0
 
     # We just need surah_id and ayah number and sajdeh enum
     i = 1
@@ -130,15 +135,14 @@ def parse_quran_ayahs_table(root):
         aya_index = aya.attrib['index']
         # Get the sajdeh status of ayah from sajdahs dict
         # if its not there then return none string
-        sajdah_status = sajdahs.get((sura_number, int(aya_index)), "none")
+        sajdah_status = sajdahs.get((surah_number, int(aya_index)), "none")
 
         if aya_index == "1":
-            sura_number += 1
+            surah_number += 1
 
-        result.append(f"({sura_number}, {aya_index}, '{sajdah_status}')")
+        # 1 is the creator_user_id
+        result.append(f"(1, {surah_number}, {aya_index}, '{sajdah_status}')")
         i += 1
-
-    print(i)
 
     return insert_to_table(INSERTABLE_QURAN_AYAHS_TABLE, ",\n".join(result))
 
@@ -198,8 +202,9 @@ def main(args):
     cur = conn.cursor()
 
     # Insert hafs mushaf to the mushafs table
+    # 1 is the creator_user_id
     hafs_sql = insert_to_table(
-        INSERTABLE_QURAN_MUSHAF_TABLE, f"(2, 'hafs', 'tanzil', '{BISMILLAH}')")
+        INSERTABLE_QURAN_MUSHAF_TABLE, f"(1, 2, 'hafs', 'tanzil', '{BISMILLAH}')")
 
     # Execute the final sql code and mushaf one
     cur.execute(hafs_sql)
