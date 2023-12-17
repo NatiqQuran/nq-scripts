@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # This script will create natiq essential translations tables
 # Tables this script will create ->
 # translations_text | translations
@@ -16,11 +18,7 @@ import re
 INSERTABLE_TRANSLATIONS_TEXT = "translations_text(creator_user_id, text, translation_id, ayah_id)"
 TRANSLATIONS_SOURCE = "tanzil"
 
-# Exits with an error
-# example: Error: cant read not xml file as a translation
-def exit_err(msg):
-    exit("Error: " + msg)
-
+USAGE_TEXT = "./translation_parser.py [translations_folder_path] [database_name] [database_host_url] [database_user] [database_password] [database_port]"
 
 # Returns the insert sql script for specific table
 def insert_to_table(i_table, values):
@@ -65,7 +63,8 @@ def check_the_translation_file(translation):
 
     # Check if file format is correct
     if splited_path[1] != ".xml":
-        exit_err("Quran Source must be an xml file")
+        print("Quran Source must be an xml file")
+        exit(1)
 
 
 def translation_metadata(file_path):
@@ -114,6 +113,12 @@ def create_user(cur, username):
     return (account_id[0], user_id[0])
 
 def main(args):
+    if len(args) < 7:
+        print("Invalid args!\n")
+        print(USAGE_TEXT)
+
+        exit(1)
+
     # Get the database information
     database = args[2]
     host = args[3]
@@ -130,11 +135,7 @@ def main(args):
     # Get the translations path, from the translations folder
     translations_list = translations(translations_folder_path)
 
-    temp_cur = conn.cursor()
-
-    creator_user = create_user(temp_cur, "nq-bot")
-
-    temp_cur.close()
+    i = 0
 
     # Iterate to the each file (translation)
     for translation in translations_list:
@@ -152,7 +153,8 @@ def main(args):
         # This script can just parse the xml format
         # although the is not a best way to find file format
         if metadata["type"] != "xml":
-            exit_err("This program can just parse the xml type of translations")
+            print("This program can just parse the xml type of translations")
+            exit(1)
 
         # we open the translation file
         translation_source = open(path, "r")
@@ -169,7 +171,7 @@ def main(args):
 
         # Insert a translation in translations table
         cur.execute("INSERT INTO translations(creator_user_id, translator_account_id, language, source) VALUES (%s, %s, %s, %s) RETURNING id",
-                    (creator_user[1], author_user[0], metadata["language"], TRANSLATIONS_SOURCE))
+                    (1, author_user[0], metadata["language"], TRANSLATIONS_SOURCE))
 
         translation_id = cur.fetchone()[0]
 
@@ -183,7 +185,7 @@ def main(args):
 
         # This will return the INSERT script that will create
         # the new translation_text field
-        translations_text_data = create_translation_table(root, translation_id, creator_user[1])
+        translations_text_data = create_translation_table(root, translation_id, 1)
 
         print("* Executing")
 
@@ -195,12 +197,15 @@ def main(args):
 
         cur.close()
 
+        i += 1
         print("* Successfuly added to the database.")
         print(("-" * 50))
 
     # close the connection from psql
     # this is not necessary because program ends here
     conn.close()
+
+    print(f"\n* Successfully imported translations: {i}")
 
 
 if __name__ == "__main__":
