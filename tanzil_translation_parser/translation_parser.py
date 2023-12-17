@@ -12,8 +12,9 @@ import xml.etree.ElementTree as ET
 import psycopg2
 import re
 
-INSERTABLE_TRANSLATIONS_TEXT = "translations_text(text, translation_id, ayah_id)"
-
+# INSERTABLE_TRANSLATIONS = "translations(creator_user_id, translator_account_id, language, source)"
+INSERTABLE_TRANSLATIONS_TEXT = "translations_text(creator_user_id, text, translation_id, ayah_id)"
+TRANSLATIONS_SOURCE = "tanzil"
 
 # Exits with an error
 # example: Error: cant read not xml file as a translation
@@ -36,7 +37,7 @@ def remove_comments_from_xml(source):
     return re.sub("(<!--.*?-->)", "", source.decode('utf-8'), flags=re.DOTALL)
 
 
-def create_translation_table(root, translation_id):
+def create_translation_table(root, translation_id, creator_user_id):
     result = []
 
     # calculating the ayahs
@@ -50,7 +51,7 @@ def create_translation_table(root, translation_id):
         # We append this aya to the final sql
         # example: ("some quran text", 1, 1)
         result.append(
-            f"('{surah_text}', {translation_id}, {ayah_num})")
+            f"({creator_user_id}, '{surah_text}', {translation_id}, {ayah_num})")
 
         ayah_num += 1
 
@@ -77,8 +78,42 @@ def translation_metadata(file_path):
     return {"language": splited_file_name[0], "author": splited_file_name[1], "type": splited_file_name[2]}
 
 
-def main(args):
+# This will create user with account
+# If exists will return the id
+def create_user(cur, username):
+    # We will create a account for every translator
+    cur.execute("INSERT INTO app_accounts(username, account_type) VALUES (%s, %s) ON CONFLICT (username) DO NOTHING RETURNING id",
+                (username, "user"))
 
+    # Get the account id from executed sql
+    account_id = cur.fetchone()
+    user_id = None
+
+    # if this is a new account
+    if account_id != None:
+        # Also we must create a User for this account
+        # metadata['author']
+        cur.execute(
+            "INSERT INTO app_users(account_id, language) VALUES (%s, %s) RETURNING id", (account_id, "en"))
+        user_id = cur.fetchone()
+    else:
+        # handle the existed account
+        print("* The translator account exists, skiping user creation")
+        cur.execute(
+            "SELECT id FROM app_accounts WHERE username=%s", (username, ))
+
+        # get the id and set it to the account_id var
+        account_id = cur.fetchone()
+
+        cur.execute(
+            "SELECT id FROM app_users WHERE account_id=%s", (account_id, ))
+
+        # Get the id of user id
+        user_id = cur.fetchone()
+
+    return (account_id[0], user_id[0])
+
+def main(args):
     # Get the database information
     database = args[2]
     host = args[3]
@@ -87,8 +122,7 @@ def main(args):
     port = args[6]
 
     # Connect to the database
-    conn = psycopg2.connect(database=database, host=host,
-                            user=user, password=password, port=port)
+    conn = psycopg2.connect(database=database, host=host, user=user, password=password, port=port)
 
     # Get the quran path
     translations_folder_path = args[1]
@@ -96,18 +130,24 @@ def main(args):
     # Get the translations path, from the translations folder
     translations_list = translations(translations_folder_path)
 
+    temp_cur = conn.cursor()
+
+    creator_user = create_user(temp_cur, "nq-bot")
+
+    temp_cur.close()
+
     # Iterate to the each file (translation)
     for translation in translations_list:
-        # Create a new cursor (idk what is this)
-        cur = conn.cursor()
-
         # Get the file path
         path = translation.path
+
+        # Create a new cursor (idk what is this)
+        cur = conn.cursor()
 
         # Gather the metadata from path
         metadata = translation_metadata(path)
 
-        print(f'Parsing {path}')
+        print(f'* Working on {path}')
 
         # This script can just parse the xml format
         # although the is not a best way to find file format
@@ -122,47 +162,30 @@ def main(args):
         # we must close the file because we are in the loop
         translation_source.close()
 
-        # We will create a account for every translator
-        cur.execute("INSERT INTO app_accounts(username, account_type) VALUES (%s, %s) ON CONFLICT (username) DO NOTHING RETURNING id",
-                    (metadata['author'], "user"))
-
-        # Get the account id from executed sql
-        account_id = cur.fetchone()
-
-        # if this is a new account
-        if account_id != None:
-            # Also we must create a User for this account
-            cur.execute(
-                "INSERT INTO app_users(account_id, last_name) VALUES (%s, %s) ON CONFLICT (account_id) DO NOTHING", (account_id, metadata['author']))
-        else:
-            # handle the existed account
-            print("The translator account exists, skiping user creation")
-            cur.execute(
-                "SELECT id FROM app_accounts WHERE username=%s", (metadata['author'], ))
-
-            # get the id and set it to the account_id var
-            account_id = cur.fetchone()
+        author_user = create_user(cur, metadata["author"])
 
         # commit the chages
         conn.commit()
 
         # Insert a translation in translations table
-        cur.execute("INSERT INTO translations(translator_id, language) VALUES (%s, %s) RETURNING id",
-                    (account_id[0], metadata["language"]))
+        cur.execute("INSERT INTO translations(creator_user_id, translator_account_id, language, source) VALUES (%s, %s, %s, %s) RETURNING id",
+                    (creator_user[1], author_user[0], metadata["language"], TRANSLATIONS_SOURCE))
+
+        translation_id = cur.fetchone()[0]
 
         # Remove the comments from translation file content
         translation_text_clean = remove_comments_from_xml(tranlation_text)
 
-        print("parsing xml")
+        print("* Parsing xml")
 
         # We are parsing the xml
         root = ET.fromstring(translation_text_clean)
+
         # This will return the INSERT script that will create
         # the new translation_text field
-        translations_text_data = create_translation_table(
-            root, cur.fetchone()[0])
+        translations_text_data = create_translation_table(root, translation_id, creator_user[1])
 
-        print("executing")
+        print("* Executing")
 
         # we execute the script
         cur.execute(translations_text_data)
@@ -170,9 +193,10 @@ def main(args):
         # commit the changes
         conn.commit()
 
-        # close the cursor
-        # is this necessary?
         cur.close()
+
+        print("* Successfuly added to the database.")
+        print(("-" * 50))
 
     # close the connection from psql
     # this is not necessary because program ends here
