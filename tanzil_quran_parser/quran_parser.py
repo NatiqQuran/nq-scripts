@@ -15,7 +15,7 @@ import psycopg2
 
 TANZIL_QURAN_SOURCE_HASH = "a22c0d515c37a5667160765c2d1d171fa4b9d7d8778e47161bb0fe894cf61c1d"
 
-INSERTABLE_QURAN_MUSHAF_TABLE = "mushafs(creator_user_id, id, name, source, bismillah_text)"
+INSERTABLE_QURAN_MUSHAF_TABLE = "mushafs(creator_user_id, id, short_name, name, source, bismillah_text)"
 INSERTABLE_QURAN_SURAH_TABLE = "quran_surahs(creator_user_id, name, period, number, bismillah_status, bismillah_as_first_ayah, mushaf_id)"
 INSERTABLE_QURAN_WORDS_TABLE = "quran_words(creator_user_id, ayah_id, word)"
 INSERTABLE_QURAN_AYAHS_TABLE = "quran_ayahs(creator_user_id, surah_id, ayah_number, sajdeh)"
@@ -204,7 +204,7 @@ def main(args):
     # Insert hafs mushaf to the mushafs table
     # 1 is the creator_user_id
     hafs_sql = insert_to_table(
-        INSERTABLE_QURAN_MUSHAF_TABLE, f"(1, 2, 'hafs', 'tanzil', '{BISMILLAH}')")
+        INSERTABLE_QURAN_MUSHAF_TABLE, f"(1, 2, 'hafs', 'Hafs an Asem','tanzil', '{BISMILLAH}')")
 
     # Execute the final sql code and mushaf one
     cur.execute(hafs_sql)

@@ -170,8 +170,8 @@ def main(args):
         conn.commit()
 
         # Insert a translation in translations table
-        cur.execute("INSERT INTO translations(mushaf_id, creator_user_id, translator_account_id, language, source) VALUES (%s, %s, %s, %s, %s) RETURNING id",
-                    (2, 1, author_user[0], metadata["language"], TRANSLATIONS_SOURCE))
+        cur.execute("INSERT INTO translations(mushaf_id, creator_user_id, translator_account_id, language, completed,source) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                    (2, 1, author_user[0], metadata["language"], True, TRANSLATIONS_SOURCE))
 
         translation_id = cur.fetchone()[0]
 
