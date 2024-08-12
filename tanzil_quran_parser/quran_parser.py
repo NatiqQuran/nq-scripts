@@ -18,16 +18,16 @@ TANZIL_QURAN_SOURCE_HASH = "a22c0d515c37a5667160765c2d1d171fa4b9d7d8778e47161bb0
 INSERTABLE_QURAN_MUSHAF_TABLE = "mushafs(creator_user_id, id, short_name, name, source, bismillah_text)"
 INSERTABLE_QURAN_SURAH_TABLE = "quran_surahs(creator_user_id, name, period, number, bismillah_status, bismillah_as_first_ayah, mushaf_id)"
 INSERTABLE_QURAN_WORDS_TABLE = "quran_words(creator_user_id, ayah_id, word)"
-INSERTABLE_QURAN_AYAHS_TABLE = "quran_ayahs(creator_user_id, surah_id, ayah_number, sajdeh)"
+INSERTABLE_QURAN_AYAHS_TABLE = "quran_ayahs(creator_user_id, surah_id, ayah_number, sajdah)"
 
 BISMILLAH = "بِسْمِ ٱللَّهِ ٱلرَّحْمَـٰنِ ٱلرَّحِيمِ"
 
 USAGE_TEXT = "./quran_parser [xml_file_path] [database_name] [database_host_url] [database_user] [database_password] [database_port]"
 
-# The surah, ayah number has the sajdeh
+# The surah, ayah number has the sajdah
 # There are 3 types we must provide to the user
 # vajib, mustahab and none
-# if the ayah is not available in this list then return its sajdeh as none
+# if the ayah is not available in this list then return its sajdah as none
 sajdahs = {
     (32, 15): "vajib",
     (41, 37): "vajib",
@@ -43,6 +43,123 @@ sajdahs = {
     (27, 26): "mustahab",
     (38, 24): "mustahab",
     (84, 21): "mustahab",
+}
+
+periods = {
+    1: "makki",
+    2: "madani",
+    3: "madani",
+    4: "madani",
+    5: "madani",
+    6: "makki",
+    7: "makki",
+    8: "madani",
+    9: "madani",
+    10: "makki",
+    11: "makki",
+    12: "makki",
+    13: "madani",
+    14: "makki",
+    15: "makki",
+    16: "makki",
+    17: "makki",
+    18: "makki",
+    19: "makki",
+    20: "makki",
+    21: "makki",
+    22: "madani",
+    23: "makki",
+    24: "madani",
+    25: "makki",
+    26: "makki",
+    27: "makki",
+    28: "makki",
+    29: "makki",
+    30: "makki",
+    31: "makki",
+    32: "makki",
+    33: "madani",
+    34: "makki",
+    35: "makki",
+    36: "makki",
+    37: "makki",
+    38: "makki",
+    39: "makki",
+    40: "makki",
+    41: "makki",
+    42: "makki",
+    43: "makki",
+    44: "makki",
+    45: "makki",
+    46: "makki",
+    47: "madani",
+    48: "madani",
+    49: "madani",
+    50: "makki",
+    51: "makki",
+    52: "makki",
+    53: "makki",
+    54: "makki",
+    55: "madani",
+    56: "makki",
+    57: "madani",
+    58: "madani",
+    59: "madani",
+    60: "madani",
+    61: "madani",
+    62: "madani",
+    63: "madani",
+    64: "madani",
+    65: "madani",
+    66: "madani",
+    67: "makki",
+    68: "makki",
+    69: "makki",
+    70: "makki",
+    71: "makki",
+    72: "makki",
+    73: "makki",
+    74: "makki",
+    75: "makki",
+    76: "madani",
+    77: "makki",
+    78: "makki",
+    79: "makki",
+    80: "makki",
+    81: "makki",
+    82: "makki",
+    83: "makki",
+    84: "makki",
+    85: "makki",
+    86: "makki",
+    87: "makki",
+    88: "makki",
+    89: "makki",
+    90: "makki",
+    91: "makki",
+    92: "makki",
+    93: "makki",
+    94: "makki",
+    95: "makki",
+    96: "makki",
+    97: "makki",
+    98: "madani",
+    99: "madani",
+    100: "makki",
+    101: "makki",
+    102: "makki",
+    103: "makki",
+    104: "makki",
+    105: "makki",
+    106: "makki",
+    107: "makki",
+    108: "makki",
+    109: "makki",
+    110: "madani",
+    111: "makki",
+    112: "makki",
+    113: "makki",
+    114: "makki",
 }
 
 def exit_err(msg):
@@ -76,11 +193,12 @@ def parse_quran_suarhs_table(root, mushaf_id):
     for child in root:
         surah_name = child.attrib['name']
         first_ayah = root[surah_num - 1][0]
+        period = periods.get(surah_num)
         if first_ayah.attrib['text'] == BISMILLAH:
             # also set the mushaf_id
             # 1 is the creator_user_id
             result.append(
-                f"(1, '{surah_name}', NULL, {surah_num}, true, true, {mushaf_id})")
+                f"(1, '{surah_name}', '{period}', {surah_num}, true, true, {mushaf_id})")
 
         else:
             first_ayah_bismillah_status = first_ayah.get('bismillah', False)
@@ -89,7 +207,7 @@ def parse_quran_suarhs_table(root, mushaf_id):
 
             # 1 is the creator_user_id
             result.append(
-                f"(1, '{surah_name}', NULL, {surah_num}, '{status}', false, {mushaf_id})")
+                f"(1, '{surah_name}', '{period}', {surah_num}, '{status}', false, {mushaf_id})")
 
         surah_num += 1
 
@@ -104,12 +222,12 @@ def parse_quran_words_table(root):
     ayah_number = 1
 
     for aya in root.iter('aya'):
-        # remove the every sajdeh char in the text
+        # remove the every sajdah char in the text
         # by replacing it with empty string
-        ayahtext_without_sajdeh = aya.attrib['text'].replace('۩', '')
+        ayahtext_without_sajdah = aya.attrib['text'].replace('۩', '')
 
         # Get the array of aya words
-        words = ayahtext_without_sajdeh.split(" ")
+        words = ayahtext_without_sajdah.split(" ")
 
         # Map and change every word to a specific format
         # 1 is the creator_user_id
@@ -129,19 +247,22 @@ def parse_quran_ayahs_table(root):
     result = []
     surah_number = 0
 
-    # We just need surah_id and ayah number and sajdeh enum
+    # We just need surah_id and ayah number and sajdah enum
     i = 1
     for aya in root.iter('aya'):
         aya_index = aya.attrib['index']
-        # Get the sajdeh status of ayah from sajdahs dict
+        # Get the sajdah status of ayah from sajdahs dict
         # if its not there then return none string
-        sajdah_status = sajdahs.get((surah_number, int(aya_index)), "none")
+        sajdah_status = sajdahs.get((surah_number, int(aya_index)), None)
 
         if aya_index == "1":
             surah_number += 1
 
         # 1 is the creator_user_id
-        result.append(f"(1, {surah_number}, {aya_index}, '{sajdah_status}')")
+        if sajdah_status == None:
+            result.append(f"(1, {surah_number}, {aya_index}, NULL)")
+        else:
+            result.append(f"(1, {surah_number}, {aya_index}, '{sajdah_status}')")
         i += 1
 
     return insert_to_table(INSERTABLE_QURAN_AYAHS_TABLE, ",\n".join(result))
