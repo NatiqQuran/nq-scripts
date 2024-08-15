@@ -169,12 +169,6 @@ def main(args):
         # commit the chages
         conn.commit()
 
-        # Insert a translation in translations table
-        cur.execute("INSERT INTO translations(mushaf_id, creator_user_id, translator_account_id, language, approved, source) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
-                    (2, 1, author_user[0], metadata["language"], True, TRANSLATIONS_SOURCE))
-
-        translation_id = cur.fetchone()[0]
-
         # Remove the comments from translation file content
         translation_text_clean = remove_comments_from_xml(tranlation_text)
 
@@ -183,7 +177,14 @@ def main(args):
         # We are parsing the xml
         root = ET.fromstring(translation_text_clean)
 
-        # This will return the INSERT script that will create
+        first_ayah_text = root[0][0].attrib['text']
+        # Insert a translation in translations table
+        cur.execute("INSERT INTO translations(mushaf_id, creator_user_id, translator_account_id, language, approved, source, bismillah_text) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                    (2, 1, author_user[0], metadata["language"], True, TRANSLATIONS_SOURCE, first_ayah_text))
+
+        translation_id = cur.fetchone()[0]
+
+             # This will return the INSERT script that will create
         # the new translation_text field
         translations_text_data = create_translation_table(root, translation_id, 1)
 
