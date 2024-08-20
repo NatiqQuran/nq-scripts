@@ -41,10 +41,11 @@ def create_user(cur, username, email):
         cur.execute('INSERT INTO app_emails (account_id, creator_user_id, email,verified,"primary",deleted) VALUES (%s,%s, %s,true,true,false)', (1,1,email, ))
         print("* Email Created")
 
-        cur.execute('INSERT INTO app_permissions (creator_user_id, subject,"object","action") VALUES (%s,%s, %s, %s)', (1,"1","permission", "create"))
-        cur.execute('INSERT INTO app_permissions (creator_user_id, subject,"object","action") VALUES (%s,%s, %s, %s)', (1,"1","permission", "delete"))
-        cur.execute('INSERT INTO app_permissions (creator_user_id, subject,"object","action") VALUES (%s,%s, %s, %s)', (1,"1","permission", "view"))
-        cur.execute('INSERT INTO app_permissions (creator_user_id, subject,"object","action") VALUES (%s,%s, %s, %s)', (1,"1","permission", "edit"))
+        cur.execute('INSERT INTO app_permissions (creator_user_id, account_id,"object","action") VALUES (%s,%s, %s, %s)', (1,1,"permission", "create"))
+        cur.execute('INSERT INTO app_permissions (creator_user_id, account_id,"object","action") VALUES (%s,%s, %s, %s)', (1,1,"permission", "delete"))
+        cur.execute('INSERT INTO app_permissions (creator_user_id, account_id,"object","action") VALUES (%s,%s, %s, %s)', (1,1,"permission", "view"))
+        cur.execute('INSERT INTO app_permissions (creator_user_id, account_id,"object","action") VALUES (%s,%s, %s, %s)', (1,1,"permission", "edit"))
+        cur.execute('INSERT INTO app_permissions (creator_user_id, account_id,"object","action") VALUES (%s,%s, %s, %s)', (1,1,"user", "view"))
         print("* Permissions where given to the user")
 
     return (account_id[0], user_id[0])
