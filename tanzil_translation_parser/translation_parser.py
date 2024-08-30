@@ -2,7 +2,7 @@
 
 # This script will create natiq essential translations tables
 # Tables this script will create ->
-# translations_text | translations
+# quran_translations_text | quran_translations
 # More clearly the result of this script is the sql code
 # that will create tables and insert the data (translation)
 #
@@ -15,7 +15,7 @@ import psycopg2
 import re
 
 # INSERTABLE_TRANSLATIONS = "translations(creator_user_id, translator_account_id, language, source)"
-INSERTABLE_TRANSLATIONS_TEXT = "translations_text(creator_user_id, text, translation_id, ayah_id)"
+INSERTABLE_TRANSLATIONS_TEXT = "quran_translations_text(creator_user_id, text, translation_id, ayah_id)"
 TRANSLATIONS_SOURCE = "tanzil"
 
 USAGE_TEXT = "./translation_parser.py [translations_folder_path] [database_name] [database_host_url] [database_user] [database_password] [database_port]"
@@ -179,7 +179,7 @@ def main(args):
 
         first_ayah_text = root[0][0].attrib['text']
         # Insert a translation in translations table
-        cur.execute("INSERT INTO translations(mushaf_id, creator_user_id, translator_account_id, language, approved, source, bismillah_text) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        cur.execute("INSERT INTO quran_translations(mushaf_id, creator_user_id, translator_account_id, language, approved, source, bismillah_text) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
                     (2, 1, author_user[0], metadata["language"], True, TRANSLATIONS_SOURCE, first_ayah_text))
 
         translation_id = cur.fetchone()[0]
