@@ -1,0 +1,75 @@
+#!/bin/bash
+# ============================================
+# Version: 1.0.0
+# Description: This bash script updates a main Git branch,
+# restarts Docker services, and runs a series of Python scripts 
+# for creating an admin user, parsing Quran XML, and parsing translations.
+# ============================================
+# (nq-team)
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BOLD='\033[1m'
+RESET='\033[0m'
+
+set -e
+
+# Run git status and check if a pull is needed
+STATUS_OUTPUT=$(git status)
+if [[ $STATUS_OUTPUT == *"Your branch is behind"* ]]; then
+    echo -e "${YELLOW}>>> Your branch is behind with ${RED}'origin/main'${YELLOW}, pulling changes...${RESET}"    
+    git pull
+    echo -e "${GREEN}>>> git pulled, your branch is up-to-date with ${RED}'origin/main'${RESET}"
+else
+    echo -e "${GREEN}>>> The branch is up-to-date with ${RED}'origin/main'${RESET}"
+fi
+
+# Start time recording
+start_time=$(date +%s)
+
+# Docker restart process
+echo -e "${YELLOW}${BOLD}--- Restarting Docker Services ---${RESET}"
+docker compose down
+echo -e "${GREEN}>>> Docker services stopped${RESET}"
+docker compose pull
+echo -e "${GREEN}>>> Docker images updated${RESET}"
+docker compose up -d
+echo -e "${GREEN}>>> Docker services restarted${RESET}"
+
+# End time recording
+end_time=$(date +%s)
+
+# Save the docker-compose.yml file path
+DOCKER_COMPOSE_FILE="../docker-compose.yml"
+
+# Extract the POSTGRES_PASSWORD from the docker-compose.yml file
+POSTGRES_PASSWORD=$(grep 'POSTGRES_PASSWORD' "$DOCKER_COMPOSE_FILE" | awk -F': ' '{print $2}' | tr -d '"')
+
+# Extract the postgres docker image PORT 
+POSTGRES_PORT=$(docker ps --filter "ancestor=postgres:latest" --format "{{.Ports}}" | grep -oP '0\.0\.0\.0:\K[0-9]+')
+
+# Receive email and username 
+echo -e "${YELLOW}${BOLD}--- Creating Admin User ---${RESET}"
+printf "${GREEN}${BOLD}Enter admin Email:${RESET} "
+read EMAIL
+printf "${GREEN}${BOLD}Enter admin UserName:${RESET} "
+read USER_NAME
+
+# Run admin user creation script
+python3 admin_user_creator/admin_user_creator.py base localhost admin "$POSTGRES_PASSWORD" "$POSTGRES_PORT" "$EMAIL" "$USER_NAME"
+echo -e "${GREEN}>>> Admin account created\n>>> Email: $EMAIL\n>>> User_name: $USER_NAME${RESET}"
+
+# Run quran parser script
+echo -e "${YELLOW}${BOLD}--- Running Quran Parser ---${RESET}"
+python3 ./tanzil_quran_parser/quran_parser.py ./tanzil_quran_parser/quran-uthmani.xml base localhost admin "$POSTGRES_PASSWORD" "$POSTGRES_PORT"
+echo -e "${GREEN}>>> quran_parser.py Successfully executed${RESET}"
+
+# Run translation parser script
+echo -e "${YELLOW}${BOLD}--- Running Translation Parser ---${RESET}"
+python3 ./tanzil_translation_parser/translation_parser.py ./tanzil_translation_parser/translations/ base localhost admin "$POSTGRES_PASSWORD" "$POSTGRES_PORT"
+echo -e "${GREEN}>>> translation_parser.py Successfully executed${RESET}"
+
+# Calculate docker restart process time:
+total_time=$((end_time - start_time))
+echo -e "${GREEN}>>> Docker restart process time: ${RED}$((total_time / 60))${GREEN} minutes and ${RED}$((total_time % 60)) ${GREEN}seconds\n${BOLD}--- Update completed! ---${RESET}"
