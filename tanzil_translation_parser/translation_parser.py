@@ -179,7 +179,7 @@ def main(args):
 
         first_ayah_text = root[0][0].attrib['text']
         # Insert a translation in translations table
-        cur.execute("INSERT INTO quran_translations(mushaf_id, creator_user_id, translator_account_id, language, approved, source, bismillah_text) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        cur.execute("INSERT INTO quran_translations(mushaf_id, creator_user_id, translator_account_id, language, approved, source, bismillah) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
                     (2, 1, author_user[0], metadata["language"], True, TRANSLATIONS_SOURCE, first_ayah_text))
 
         translation_id = cur.fetchone()[0]
