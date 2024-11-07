@@ -3,7 +3,7 @@
 # This script will create natiq essential quran tables
 # quran_ayahs | quran_words | quran_surahs
 #
-# This script will generate table creation sql and execute's into 
+# This script will generate table creation sql and execute's into
 # the given database.
 #
 # (nq-team)
@@ -15,10 +15,10 @@ import psycopg2
 
 TANZIL_QURAN_SOURCE_HASH = "a22c0d515c37a5667160765c2d1d171fa4b9d7d8778e47161bb0fe894cf61c1d"
 
-INSERTABLE_QURAN_MUSHAF_TABLE = "quran_mushafs(creator_user_id, id, short_name, name, source, bismillah_text)"
-INSERTABLE_QURAN_SURAH_TABLE = "quran_surahs(creator_user_id, name, period, number, bismillah_status, bismillah_as_first_ayah, mushaf_id)"
+INSERTABLE_QURAN_MUSHAF_TABLE = "quran_mushafs(creator_user_id, id, short_name, name, source)"
+INSERTABLE_QURAN_SURAH_TABLE = "quran_surahs(creator_user_id, name, period, number, mushaf_id)"
 INSERTABLE_QURAN_WORDS_TABLE = "quran_words(creator_user_id, ayah_id, word)"
-INSERTABLE_QURAN_AYAHS_TABLE = "quran_ayahs(creator_user_id, surah_id, ayah_number, sajdah)"
+INSERTABLE_QURAN_AYAHS_TABLE = "quran_ayahs(creator_user_id, surah_id, ayah_number, sajdah, is_bismillah, bismillah_text)"
 
 BISMILLAH = "بِسْمِ ٱللَّهِ ٱلرَّحْمَـٰنِ ٱلرَّحِيمِ"
 
@@ -194,20 +194,8 @@ def parse_quran_suarhs_table(root, mushaf_id):
         surah_name = child.attrib['name']
         first_ayah = root[surah_num - 1][0]
         period = periods.get(surah_num)
-        if first_ayah.attrib['text'] == BISMILLAH:
-            # also set the mushaf_id
-            # 1 is the creator_user_id
-            result.append(
-                f"(1, '{surah_name}', '{period}', {surah_num}, true, true, {mushaf_id})")
 
-        else:
-            first_ayah_bismillah_status = first_ayah.get('bismillah', False)
-
-            status = 'true' if first_ayah_bismillah_status != False else 'false'
-
-            # 1 is the creator_user_id
-            result.append(
-                f"(1, '{surah_name}', '{period}', {surah_num}, '{status}', false, {mushaf_id})")
+        result.append(f"(1, '{surah_name}', '{period}', {surah_num}, {mushaf_id})")
 
         surah_num += 1
 
@@ -250,6 +238,7 @@ def parse_quran_ayahs_table(root):
     # We just need surah_id and ayah number and sajdah enum
     i = 1
     for aya in root.iter('aya'):
+        is_bismillah = aya.attrib['text'] == BISMILLAH
         aya_index = aya.attrib['index']
         # Get the sajdah status of ayah from sajdahs dict
         # if its not there then return none string
@@ -260,9 +249,16 @@ def parse_quran_ayahs_table(root):
 
         # 1 is the creator_user_id
         if sajdah_status == None:
-            result.append(f"(1, {surah_number}, {aya_index}, NULL)")
+            if 'bismillah' in aya.attrib:
+                result.append(f"(1, {surah_number}, {aya_index}, NULL, {is_bismillah}, '{aya.attrib['bismillah']}')")
+            else:
+                result.append(f"(1, {surah_number}, {aya_index}, NULL, {is_bismillah}, NULL)")
         else:
-            result.append(f"(1, {surah_number}, {aya_index}, '{sajdah_status}')")
+            if 'bismillah' in aya.attrib:
+                result.append(f"(1, {surah_number}, {aya_index}, '{sajdah_status}', {is_bismillah}, '{aya.attrib['bismillah']}')")
+            else:
+                result.append(f"(1, {surah_number}, {aya_index}, '{sajdah_status}', {is_bismillah}, NULL)")
+            # result.append(f"(1, {surah_number}, {aya_index}, '{sajdah_status}', {is_bismillah})")
         i += 1
 
     return insert_to_table(INSERTABLE_QURAN_AYAHS_TABLE, ",\n".join(result))
@@ -325,7 +321,7 @@ def main(args):
     # Insert hafs mushaf to the mushafs table
     # 1 is the creator_user_id
     hafs_sql = insert_to_table(
-        INSERTABLE_QURAN_MUSHAF_TABLE, f"(1, 2, 'hafs', 'Hafs an Asem','tanzil', '{BISMILLAH}')")
+        INSERTABLE_QURAN_MUSHAF_TABLE, f"(1, 2, 'hafs', 'Hafs an Asem','tanzil')")
 
     # Execute the final sql code and mushaf one
     cur.execute(hafs_sql)
