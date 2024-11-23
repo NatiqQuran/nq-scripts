@@ -15,7 +15,7 @@ import psycopg2
 import re
 
 # INSERTABLE_TRANSLATIONS = "translations(creator_user_id, translator_account_id, language, source)"
-INSERTABLE_TRANSLATIONS_TEXT = "quran_translations_text(creator_user_id, text, translation_id, ayah_id)"
+INSERTABLE_TRANSLATIONS_AYAHS = "quran_translations_ayahs(creator_user_id, text, translation_id, ayah_id, bismillah)"
 TRANSLATIONS_SOURCE = "tanzil"
 
 USAGE_TEXT = "./translation_parser.py [translations_folder_path] [database_name] [database_host_url] [database_user] [database_password] [database_port]"
@@ -35,12 +35,14 @@ def remove_comments_from_xml(source):
     return re.sub("(<!--.*?-->)", "", source.decode('utf-8'), flags=re.DOTALL)
 
 
-def create_translation_table(root, translation_id, creator_user_id):
+def create_translation_table(root, ayahs_bismillah, translation_id, creator_user_id):
     result = []
 
     # calculating the ayahs
     ayah_num = 1
+    first_ayah_text = root[0][0].attrib["text"].replace("'", "&quot;")
 
+    # Get ayahs that have bismillah
     for child in root.iter('aya'):
         # we replace the ' char with &quot; bequase the postgres
         # cant insert the string that has a ' char.
@@ -48,13 +50,18 @@ def create_translation_table(root, translation_id, creator_user_id):
 
         # We append this aya to the final sql
         # example: ("some quran text", 1, 1)
-        result.append(
-            f"({creator_user_id}, '{surah_text}', {translation_id}, {ayah_num})")
+        bismillah, = ayahs_bismillah[ayah_num - 1]
+        if bismillah is None:
+            result.append(
+                f"({creator_user_id}, '{surah_text}', {translation_id}, {ayah_num}, NULL)")
+        else:
+            result.append(
+                f"({creator_user_id}, '{surah_text}', {translation_id}, {ayah_num}, '{first_ayah_text}')")
 
         ayah_num += 1
 
     # finally return the final script
-    return insert_to_table(INSERTABLE_TRANSLATIONS_TEXT, ",".join(result))
+    return insert_to_table(INSERTABLE_TRANSLATIONS_AYAHS, ",".join(result))
 
 
 def check_the_translation_file(translation):
@@ -137,6 +144,12 @@ def main(args):
 
     i = 0
 
+    cur = conn.cursor()
+    # WARNING: this depends on the ayahs order
+    cur.execute("SELECT bismillah_text FROM quran_ayahs ORDER BY id ASC")
+    ayahs_bismillah = cur.fetchall()
+
+
     # Iterate to the each file (translation)
     for translation in translations_list:
         # Get the file path
@@ -176,17 +189,15 @@ def main(args):
 
         # We are parsing the xml
         root = ET.fromstring(translation_text_clean)
-
-        first_ayah_text = root[0][0].attrib['text']
         # Insert a translation in translations table
-        cur.execute("INSERT INTO quran_translations(mushaf_id, creator_user_id, translator_account_id, language, approved, source, bismillah) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
-                    (2, 1, author_user[0], metadata["language"], True, TRANSLATIONS_SOURCE, first_ayah_text))
+        cur.execute("INSERT INTO quran_translations(mushaf_id, creator_user_id, translator_account_id, language, approved, source) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                    (2, 1, author_user[0], metadata["language"], True, TRANSLATIONS_SOURCE))
 
         translation_id = cur.fetchone()[0]
 
-             # This will return the INSERT script that will create
+        # This will return the INSERT script that will create
         # the new translation_text field
-        translations_text_data = create_translation_table(root, translation_id, 1)
+        translations_text_data = create_translation_table(root, ayahs_bismillah, translation_id, 1)
 
         print("* Executing")
 

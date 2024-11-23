@@ -320,8 +320,7 @@ def main(args):
 
     # Insert hafs mushaf to the mushafs table
     # 1 is the creator_user_id
-    hafs_sql = insert_to_table(
-        INSERTABLE_QURAN_MUSHAF_TABLE, f"(1, 2, 'hafs', 'Hafs an Asem','tanzil')")
+    hafs_sql = insert_to_table(INSERTABLE_QURAN_MUSHAF_TABLE, "(1, 2, 'hafs', 'Hafs an Asem','tanzil')")
 
     # Execute the final sql code and mushaf one
     cur.execute(hafs_sql)
