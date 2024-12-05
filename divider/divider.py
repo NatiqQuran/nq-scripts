@@ -22,10 +22,10 @@ def maybe_create_account(cur, username):
     return account_id
 
 def create_ayah_divide(cur,ayah_id, divider_account_id, type):
-    cur.execute("INSERT INTO quran_ayah_divide(creator_user_id, ayah_id, divider_account_id, type) VALUES (1, %s, %s, %s)", (ayah_id, divider_account_id, type))
+    cur.execute("INSERT INTO quran_ayahs_divide(creator_user_id, ayah_id, divider_account_id, type) VALUES (1, %s, %s, %s)", (ayah_id, divider_account_id, type))
 
 def create_word_divide(cur, word_id, divider_account_id, type):
-    cur.execute("INSERT INTO quran_word_divide(creator_user_id, word_id, divider_account_id, type) VALUES (1, %s, %s, %s)", (word_id, divider_account_id, type))
+    cur.execute("INSERT INTO quran_words_divide(creator_user_id, word_id, divider_account_id, type) VALUES (1, %s, %s, %s)", (word_id, divider_account_id, type))
 
 def get_ayah(cur, surah_number, ayah_number):
     cur.execute("""SELECT (qa.id) FROM quran_surahs qs
