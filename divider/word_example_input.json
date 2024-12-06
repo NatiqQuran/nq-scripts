@@ -1,0 +1,7 @@
+[
+  {
+    "name": "divider_name",
+    "type": "line",
+    "list": ["1:1:1", "1:2:1"]
+  }
+]

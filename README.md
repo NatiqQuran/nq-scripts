@@ -8,4 +8,5 @@ You must run these scripts in this order otherwise it will not work:
 
 1. accounts_bootstrap
 2. tanzil_quran_parser
-3. tanzil_translation_parser
+3. divider
+4. tanzil_translation_parser
