@@ -43,9 +43,11 @@ def get_word(cur, surah_number, ayah_number, word_number):
         ON qw.ayah_id = qa.id
         WHERE qs.number = %s AND qa.ayah_number = %s
         ORDER BY qw.id""", (surah_number, ayah_number))
-
-    return cur.fetchall()[word_number - 1][0]
-
+    print(f'{surah_number}:{ayah_number}:{word_number}')
+    data = cur.fetchall()
+    print(data)
+    return data[word_number - 1][0]
+    #return cur.fetchone()
 def get_surah_and_ayah_number(string):
     splited = string.split(":")
 
