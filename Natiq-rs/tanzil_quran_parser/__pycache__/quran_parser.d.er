@@ -1,0 +1,32 @@
+##[pylyzer] failed /home/uwu/projects/nq-scripts/tanzil_quran_parser/quran_parser.py 1741959774 9099
+.hashlib: Never
+
+.sys: Never
+
+.ET: Never
+
+.psycopg2: Never
+
+.___v_desugar_1: Never
+.datetime: Never
+.TANZIL_QURAN_SOURCE_HASH: {"a22c0d515c37a5667160765c2d1d171fa4b9d7d8778e47161bb0fe894cf61c1d"}
+.INSERTABLE_QURAN_MUSHAF_TABLE: {"quran_mushaf(creator_id, id, short_name, name, source, created_at, updated_at)"}
+.INSERTABLE_QURAN_SURAH_TABLE: {"quran_surah(creator_id, name, period, number, mushaf_id, created_at, updated_at)"}
+.INSERTABLE_QURAN_WORDS_TABLE: {"quran_word(creator_id, ayah_id, word, created_at, updated_at)"}
+.INSERTABLE_QURAN_AYAHS_TABLE: {"quran_ayah(creator_id, surah_id, ayah_number, sajdah, is_bismillah, bismillah_text, created_at, updated_at)"}
+.BISMILLAH: {"بِسْمِ ٱللَّهِ ٱلرَّحْمَـٰنِ ٱلرَّحِيمِ"}
+.USAGE_TEXT: {"..quran_parser [xml_file_path] [database_name] [database_host_url] [database_user] [database_password] [database_port]"}
+.sajdahs: global::Dict!({global::Tuple([{32}, {15}]): {"vajib"}, global::Tuple([{19}, {58}]): {"mustahab"}, global::Tuple([{16}, {50}]): {"mustahab"}, global::Tuple([{25}, {60}]): {"mustahab"}, global::Tuple([{96}, {19}]): {"vajib"}, global::Tuple([{7}, {206}]): {"mustahab"}, global::Tuple([{13}, {15}]): {"mustahab"}, global::Tuple([{17}, {109}]): {"mustahab"}, global::Tuple([{27}, {26}]): {"mustahab"}, global::Tuple([{84}, {21}]): {"mustahab"}, global::Tuple([{38}, {24}]): {"mustahab"}, global::Tuple([{53}, {62}]): {"vajib"}, global::Tuple([{41}, {37}]): {"vajib"}, global::Tuple([{22}, {18}]): {"mustahab"}})
+.periods: global::Dict!({{97}: {"makki"}, {40}: {"makki"}, {109}: {"makki"}, {52}: {"makki"}, {69}: {"makki"}, {12}: {"makki"}, {81}: {"makki"}, {24}: {"madani"}, {93}: {"makki"}, {39}: {"makki"}, {100}: {"makki"}, {51}: {"makki"}, {112}: {"makki"}, {63}: {"madani"}, {11}: {"makki"}, {72}: {"makki"}, {23}: {"makki"}, {84}: {"makki"}, {99}: {"madani"}, {42}: {"makki"}, {111}: {"makki"}, {54}: {"makki"}, {2}: {"madani"}, {71}: {"makki"}, {14}: {"makki"}, {83}: {"makki"}, {26}: {"makki"}, {95}: {"makki"}, {33}: {"madani"}, {102}: {"makki"}, {45}: {"makki"}, {114}: {"makki"}, {57}: {"madani"}, {5}: {"madani"}, {74}: {"makki"}, {17}: {"makki"}, {86}: {"makki"}, {29}: {"makki"}, {36}: {"makki"}, {105}: {"makki"}, {48}: {"madani"}, {60}: {"madani"}, {65}: {"madani"}, {8}: {"madani"}, {77}: {"makki"}, {20}: {"makki"}, {89}: {"makki"}, {35}: {"makki"}, {96}: {"makki"}, {47}: {"madani"}, {108}: {"makki"}, {59}: {"madani"}, {7}: {"makki"}, {68}: {"makki"}, {19}: {"makki"}, {80}: {"makki"}, {31}: {"makki"}, {92}: {"makki"}, {38}: {"makki"}, {107}: {"makki"}, {50}: {"makki"}, {62}: {"madani"}, {67}: {"makki"}, {10}: {"makki"}, {79}: {"makki"}, {22}: {"madani"}, {91}: {"makki"}, {98}: {"madani"}, {41}: {"makki"}, {110}: {"madani"}, {53}: {"makki"}, {1}: {"makki"}, {70}: {"makki"}, {13}: {"madani"}, {82}: {"makki"}, {25}: {"makki"}, {94}: {"makki"}, {32}: {"makki"}, {101}: {"makki"}, {44}: {"makki"}, {113}: {"makki"}, {56}: {"makki"}, {4}: {"madani"}, {73}: {"makki"}, {16}: {"makki"}, {85}: {"makki"}, {28}: {"makki"}, {43}: {"makki"}, {104}: {"makki"}, {55}: {"madani"}, {3}: {"madani"}, {64}: {"madani"}, {15}: {"makki"}, {76}: {"madani"}, {27}: {"makki"}, {88}: {"makki"}, {34}: {"makki"}, {103}: {"makki"}, {46}: {"makki"}, {58}: {"madani"}, {6}: {"makki"}, {75}: {"makki"}, {18}: {"makki"}, {87}: {"makki"}, {30}: {"makki"}, {37}: {"makki"}, {106}: {"makki"}, {49}: {"madani"}, {61}: {"madani"}, {66}: {"madani"}, {9}: {"madani"}, {78}: {"makki"}, {21}: {"makki"}, {90}: {"makki"}})
+.exit_err: (msg: Str) -> NoneType
+.exit_usage: () -> NoneType
+.validate_tanzil_quran: (source: Obj) -> {.m.hexdigest() in {"a22c0d515c37a5667160765c2d1d171fa4b9d7d8778e47161bb0fe894cf61c1d"}}
+.insert_to_table: (i_table: Obj, values: Obj) -> Str
+.parse_quran_suarhs_table: (root: global::Iterable(Structural({.attrib = global::Indexable(Obj, Never)})) and global::Indexable(Obj, global::Indexable(Obj, Never)), mushaf_id: Obj) -> Str
+.parse_quran_words_table: |Type_29444 <: global::Iterable(T), Self <: global::Indexable(K, V), T <: Structural({.attrib = Self}), Type_29443 :> {"aya"}, Type_28580 <: Structural({.iter = (self: Obj, Type_29443) -> Type_29444}), V <: Str, K :> {"text"}|(root: Type_28580) -> Str
+.parse_quran_ayahs_table: Never
+.main: |P <: global::PathLike, Type_29900 :> {2}, Type_29895 :> {1, 2}, Type_28584 <: Structural({.__len__ = (self: Never) -> Nat; .__getitem__ = (self: Obj, Type_29895) -> P and (self: Obj, Type_29900) -> Type_29901}), Type_29901: Type|(args: Type_28584) -> NoneType
+
+
+
+
