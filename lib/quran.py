@@ -142,11 +142,10 @@ class Mushaf():
 BISMILLAH = "بِسْمِ ٱللَّهِ ٱلرَّحْمَـٰنِ ٱلرَّحِيمِ"
 
 class Surah():
-    def __init__(self, name, number, mushaf_id):
+    def __init__(self, name, number):
         self.name = name
         self.period = periods.get(number)
         self.number = number
-        self.mushaf_id = mushaf_id
         self.ayahs = []
 
     def ayahs_from_xml(self, surah):
@@ -157,7 +156,6 @@ class Surah():
             aya_index = ayah.attrib['index']
 
             ayahs.append(Ayah(
-                self.number,
                 self.number,
                 int(aya_index),
                 is_bismillah,
@@ -171,14 +169,12 @@ class Surah():
 
 
 class Word():
-    def __init__(self, ayah_id, text):
-        self.ayah_id = ayah_id
+    def __init__(self, text):
         self.text = text
 
 class Ayah():
-    def __init__(self, surah_id, surah_number, ayah_number, is_bismillah, bismillah_text):
-        self.surah_id = surah_id
-        self.ayah_number = ayah_number
+    def __init__(self,  surah_number, ayah_number, is_bismillah, bismillah_text):
+        self.number = ayah_number
         self.sajdah = sajdahs.get((surah_number, ayah_number), None)
         self.is_bismillah = is_bismillah
         self.bismillah_text = bismillah_text
@@ -188,14 +184,13 @@ class Ayah():
         # remove the every sajdah char in the text
         # by replacing it with empty string
         ayahtext_without_sajdah = ayah.attrib['text'].replace('۩', '')
-        ayah_index = ayah.attrib['index']
 
         # Get the array of aya words
         words = ayahtext_without_sajdah.split(" ")
 
         # Map and change every word to a specific format
         # 1 is the creator_user_id
-        values = list(map(lambda word: Word(ayah_index, word), words))
+        values = list(map(lambda word: Word(word), words))
 
         self.words = values
 
@@ -209,6 +204,6 @@ class Quran():
     
     def surahs_from_xml(self, root):
         for surah in root.iter('sura'):
-            surah = Surah(surah.attrib['name'], int(surah.attrib['index']), self.mushaf.id).ayahs_from_xml(surah)
+            surah = Surah(surah.attrib['name'], int(surah.attrib['index'])).ayahs_from_xml(surah)
             self.surahs.append(surah)
         return self

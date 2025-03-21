@@ -28,7 +28,7 @@ def main(args):
             mushaf_name = args[4]
             mushaf_full_name = args[5]
             mushaf_source = args[6]
-            pretty = (args[7] == "--pretty") if len(args) > 6 else False
+            pretty = (args[7] == "--pretty") if len(args) > 7 else False
             export_quran(args[2], mushaf_id, mushaf_name, mushaf_full_name, mushaf_source,pretty)
 
 if __name__ == "__main__":
