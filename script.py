@@ -12,8 +12,8 @@ import os
 USAGE = """Natiq Quran Exporter
 Usage:
     python script.py quran <path_to_quran_xml_file> <mushaf_name> <mushaf_full_name> <mushaf_source> [--pretty]
-    python script.py translation <path_to_translation_xml_file> <source> <language> <author> [--pretty]
-    python script.py translation-bulk <source> <path_to_translations_dir> <output_dir> [--pretty]
+    python script.py translation <path_to_translation_xml_file> <language> <author> [--pretty]
+    python script.py translation-bulk <path_to_translations_dir> <output_dir> [--pretty]
 """
 
 def quran_xml_into_json(file_path, mushaf_name, mushaf_full_name, mushaf_source,pretty = False,):
@@ -36,7 +36,7 @@ def translation_xml_into_json(file_path, source, language, author, pretty = Fals
     first_ayah_text = root[0][0].attrib['text']
 
     translation = Translation(language, source, first_ayah_text, author)\
-            .ayah_translations_from_xml(root)
+            .surahs_from_xml(root)
 
     return json.dumps(translation, default=vars, ensure_ascii=False, indent=(pretty and 4) or None)
 
