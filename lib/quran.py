@@ -133,8 +133,7 @@ periods = {
 }
 
 class Mushaf():
-    def __init__(self,id, short_name, name, source):
-        self.id = id
+    def __init__(self, short_name, name, source):
         self.name = name
         self.short_name = short_name
         self.source = source
