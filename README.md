@@ -18,10 +18,9 @@ python script.py quran <path_to_quran_xml_file> <mushaf_name> <mushaf_full_name>
 ### Export Translation data
 #### Single Translation
 ```bash
-python script.py translation <path_to_translation_xml_file> <source> <language> <author> [--pretty]
+python script.py translation <path_to_translation_xml_file> <language> <author> [--pretty]
 ```
 * `path_to_translation_xml_file` Path to raw(xml) translation file
-* `source` Data source e.g tanzil.net
 * `language` Translation language e.g en
 * `author` Translator name
 * `--pretty` Save output json with indentation(4)
@@ -30,9 +29,8 @@ python script.py translation <path_to_translation_xml_file> <source> <language> 
 ***translation files should have this form of name `{language}.{author}.xml` e.g en.itani.xml***
 
 ```bash
-python script.py translation-bulk <source> <path_to_translations_dir> <output_dir> [--pretty]
+python script.py translation-bulk <path_to_translations_dir> <output_dir> [--pretty]
 ```
-* `source` Data source e.g tanzil.net
 * `path_to_translations_dir` Translations Directory e.g translations/
 * `output_dir` Results output directory e.g out/
 * `--pretty` Save output json with indentation(4)
