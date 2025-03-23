@@ -57,23 +57,23 @@ def main(args):
 
         case "translation":
             translation_path = args[2]
-            source = args[3]
-            language = args[4]
-            author = args[5]
-            pretty = (args[6] == "--pretty") if len(args) > 6 else False
+            source = "tanzil.net" # HARD CODED
+            language = args[3]
+            author = args[4]
+            pretty = (args[5] == "--pretty") if len(args) > 5 else False
             json = translation_xml_into_json(translation_path, source, language, author, pretty)
             with open(f"{language}.{author}.json", "w", encoding="utf-8") as file:
                 file.write(json)
 
         case "translation-bulk":
-            source = args[2]
-            translations_dir_path = args[3]
-            output_dir = args[4]
+            source = "tanzil.net" # HARD CODED
+            translations_dir_path = args[2]
+            output_dir = args[3]
 
             if not os.path.exists(output_dir):
                 os.makedirs(output_dir)
 
-            pretty = (args[5] == "--pretty") if len(args) > 5 else False
+            pretty = (args[4] == "--pretty") if len(args) > 4 else False
 
             for translation in files_in_dir(translations_dir_path):
                 path = translation.path
