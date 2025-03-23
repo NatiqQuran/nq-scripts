@@ -23,7 +23,8 @@ class TranslationSurah():
         return self
 
 class Translation():
-    def __init__(self, language, source, bismillah_text, translator_username, release_date = None):
+    def __init__(self, mushaf, language, source, bismillah_text, translator_username, release_date = None):
+        self.mushaf = mushaf
         self.language = language
         self.source = source
         self.bismillah_text = bismillah_text
