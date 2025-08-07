@@ -4,7 +4,7 @@
 # Description: A script to set up and run the NatiqQuran API project using Docker.
 # It handles Docker installation, project folder setup, and initial configuration.
 # Features: Complete lifecycle management, user-friendly, enhanced security, comprehensive logging
-# Version: 2.1
+# Version: 2.3
 # Author: Natiq dev Team
 # Usage: bash setup.sh [COMMAND] [OPTIONS]
 #
@@ -21,7 +21,7 @@ IFS=$'\n\t'
 # ==============================================================================
 
 readonly SCRIPT_NAME="$(basename "$0")"
-readonly SCRIPT_VERSION="3.2"
+readonly SCRIPT_VERSION="2.3"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # --- Project Configuration ---
@@ -233,6 +233,38 @@ prompt_edit() {
     fi
 }
 
+# Prompt user for credentials if they weren't provided as flags
+prompt_for_credentials() {
+    log_info "Credential flags were not provided. Entering interactive setup."
+    echo -e "You can provide credentials in two ways:"
+    echo -e "1. On a single line: ${YELLOW}dbname=user dbpass=secret ...${NC}"
+    echo -e "2. On multiple lines, ending each line with a backslash (${YELLOW}\\${NC})"
+    echo -e "   Example:"
+    echo -e "   ${YELLOW}dbname=myuser \\${NC}"
+    echo -e "   ${YELLOW}dbpass=mypassword${NC}"
+    echo -e "Type ${GREEN}END${NC} on a new line when you are finished."
+    echo
+
+    local all_input=""
+    while IFS= read -r line; do
+        # Stop reading if the user types END
+        [[ "$line" == "END" ]] && break
+        # Append the line to the full input string, removing trailing backslashes
+        all_input+="${line%\\} "
+    done
+
+    # Parse the collected input string to find key=value pairs
+    # This pattern handles spaces around the '=' sign
+    db_user=$(echo "$all_input" | grep -o 'dbname\s*=\s*[^ ]*' | head -n 1 | cut -d'=' -f2- | tr -d ' ')
+    db_pass=$(echo "$all_input" | grep -o 'dbpass\s*=\s*[^ ]*' | head -n 1 | cut -d'=' -f2- | tr -d ' ')
+    rabbit_user=$(echo "$all_input" | grep -o 'rabbituser\s*=\s*[^ ]*' | head -n 1 | cut -d'=' -f2- | tr -d ' ')
+    rabbit_pass=$(echo "$all_input" | grep -o 'rabbitpass\s*=\s*[^ ]*' | head -n 1 | cut -d'=' -f2- | tr -d ' ')
+
+    # Export variables to be used by the calling function
+    export db_user db_pass rabbit_user rabbit_pass
+}
+
+
 # Create a temporary, production-ready compose file by injecting secrets
 create_production_config() {
     local db_user="$1"
@@ -251,17 +283,18 @@ create_production_config() {
     local allowed_hosts; allowed_hosts="$(get_public_ip),localhost,127.0.0.1"
     
     # Create the production config by replacing placeholders in the source file
+    # The new sed pattern handles leading whitespace to preserve YAML indentation
     sed \
-        -e "s/POSTGRES_USER: .*/POSTGRES_USER: ${db_user}/" \
-        -e "s/POSTGRES_PASSWORD: .*/POSTGRES_PASSWORD: ${db_pass}/" \
-        -e "s/DATABASE_USERNAME: .*/DATABASE_USERNAME: ${db_user}/" \
-        -e "s/DATABASE_PASSWORD: .*/DATABASE_PASSWORD: ${db_pass}/" \
-        -e "s/RABBITMQ_DEFAULT_USER: .*/RABBITMQ_DEFAULT_USER: ${rabbit_user}/" \
-        -e "s/RABBITMQ_DEFAULT_PASS: .*/RABBITMQ_DEFAULT_PASS: ${rabbit_pass}/" \
-        -e "s|CELERY_BROKER_URL: .*|CELERY_BROKER_URL: amqp://${rabbit_user}:${rabbit_pass}@rabbitmq:5672//|" \
-        -e "s/SECRET_KEY: .*/SECRET_KEY: ${secret_key}/" \
-        -e "s/DJANGO_ALLOWED_HOSTS: .*/DJANGO_ALLOWED_HOSTS: ${allowed_hosts}/" \
-        -e "s/DEBUG: .*/DEBUG: 0/" \
+        -e "s/^\([[:space:]]*POSTGRES_USER:\).*/\1 ${db_user}/" \
+        -e "s/^\([[:space:]]*POSTGRES_PASSWORD:\).*/\1 ${db_pass}/" \
+        -e "s/^\([[:space:]]*DATABASE_USERNAME:\).*/\1 ${db_user}/" \
+        -e "s/^\([[:space:]]*DATABASE_PASSWORD:\).*/\1 ${db_pass}/" \
+        -e "s/^\([[:space:]]*RABBITMQ_DEFAULT_USER:\).*/\1 ${rabbit_user}/" \
+        -e "s/^\([[:space:]]*RABBITMQ_DEFAULT_PASS:\).*/\1 ${rabbit_pass}/" \
+        -e "s|^\([[:space:]]*CELERY_BROKER_URL:\).*|\1 amqp://${rabbit_user}:${rabbit_pass}@rabbitmq:5672//|" \
+        -e "s/^\([[:space:]]*SECRET_KEY:\).*/\1 ${secret_key}/" \
+        -e "s/^\([[:space:]]*DJANGO_ALLOWED_HOSTS:\).*/\1 ${allowed_hosts}/" \
+        -e "s/^\([[:space:]]*DEBUG:\).*/\1 0/" \
         "$source" > "$temp_file"
     
     [[ -s "$temp_file" ]] || { log_error "Production configuration file is empty or not created"; return 1; }
@@ -376,8 +409,15 @@ validate_credentials() {
 
 # The main installation command
 cmd_install() {
-    local db_user="$1" db_pass="$2" rabbit_user="$3" rabbit_pass="$4" skip_docker="$5" skip_firewall="$6"
-    
+    # Check if any credential flag is provided. If not, use interactive mode.
+    if [[ -z "$1" && -z "$2" && -z "$3" && -z "$4" ]]; then
+        prompt_for_credentials
+    else
+        # This part handles credentials passed via flags
+        export db_user="$1" db_pass="$2" rabbit_user="$3" rabbit_pass="$4"
+    fi
+    local skip_docker="$5" skip_firewall="$6"
+
     check_system || return 1
     check_internet || return 1
     
@@ -389,6 +429,7 @@ cmd_install() {
     
     download_files || return 1
     
+    # Use provided credentials or generate new ones if they are still empty
     local final_db_user=${db_user:-"user_$(generate_secret 8 | tr '[:upper:]' '[:lower:]')"}
     local final_db_pass=${db_pass:-$(generate_secret 20)}
     local final_rabbit_user=${rabbit_user:-"rabbit_$(generate_secret 8 | tr '[:upper:]' '[:lower:]')"}
@@ -397,7 +438,6 @@ cmd_install() {
     local prod_config; prod_config=$(create_production_config "$final_db_user" "$final_db_pass" "$final_rabbit_user" "$final_rabbit_pass")
     [[ -n "$prod_config" ]] || { log_error "Failed to create production config"; return 1; }
     
-    # Prompt for edit AFTER the production file is created
     prompt_edit "$prod_config" "production docker-compose configuration"
     prompt_edit "$PROJECT_FOLDER/$NGINX_FILE" "nginx configuration"
     
@@ -410,7 +450,7 @@ cmd_install() {
     log_success "  Database Password: $final_db_pass"
     log_success "  RabbitMQ Username: $final_rabbit_user"
     log_success "  RabbitMQ Password: $final_rabbit_pass"
-    echo; [[ -z "$db_user" ]] && log_warning "Credentials were auto-generated. Save them securely!"
+    echo; [[ -z "$db_user" && -z "$1" ]] && log_warning "Credentials were auto-generated. Save them securely!"
     echo; log_info "🌐 Access your API at: http://$(get_public_ip)"
     log_info "📊 View logs: docker compose -f $PROJECT_FOLDER/$SOURCE_FILE logs -f"
     log_info "🛑 Stop services: docker compose -f $PROJECT_FOLDER/$SOURCE_FILE down"
