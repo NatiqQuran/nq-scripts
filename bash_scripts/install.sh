@@ -101,11 +101,20 @@ check_system() {
 
 generate_secret() {
     local len=${1:-32}
+    local secret=""
+
     if command_exists openssl; then
-        openssl rand -base64 48 | tr -d "=+/\n" | cut -c1-$len
+        secret=$(openssl rand -base64 48 | tr -d "=+/\n" | cut -c1-$len)
     else
-        head /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c $len
+        secret=$(head /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c $len)
     fi
+
+    # Ensure we have a secret, fallback to a simple method
+    if [[ -z "$secret" ]]; then
+        secret=$(date +%s%N | sha256sum | head -c $len)
+    fi
+
+    echo "$secret"
 }
 
 get_public_ip() {
@@ -196,7 +205,7 @@ download_files() {
     log_info "Setting up project folder: $PROJECT_FOLDER"
     mkdir -p "$PROJECT_FOLDER"
     
-    log_info "Downloading configuration files..."
+    log_info "Downloading configuration files from GitHub..."
     validate_url "$COMPOSE_URL" || { log_error "Cannot access compose file URL"; return 1; }
     validate_url "$NGINX_URL" || { log_error "Cannot access nginx config URL"; return 1; }
     
@@ -206,7 +215,7 @@ download_files() {
     [[ -s "$PROJECT_FOLDER/$SOURCE_FILE" ]] || { log_error "Downloaded compose file is empty"; return 1; }
     [[ -s "$PROJECT_FOLDER/$NGINX_FILE" ]] || { log_error "Downloaded nginx config is empty"; return 1; }
     
-    log_success "Configuration files downloaded"
+    log_success "Configuration files downloaded from GitHub"
 }
 
 # Prompt the user to manually edit a configuration file
@@ -264,6 +273,42 @@ prompt_for_credentials() {
     export db_user db_pass rabbit_user rabbit_pass
 }
 
+# Prompt user for domain input if they want to add custom domain
+prompt_for_domain() {
+    # Use stderr for all output to avoid contaminating stdout
+    echo >&2
+    log_info "Domain Configuration" >&2
+    read -p "Do you want to add a custom domain to DJANGO_ALLOWED_HOSTS? (y/N): " -t "$TIMEOUT" add_domain || add_domain="n"
+    
+    if [[ "${add_domain,,}" =~ ^y ]]; then
+        echo -e "Please enter your domain name (e.g., ${YELLOW}example.com${NC} or ${YELLOW}api.mysite.com${NC}):" >&2
+        read -p "Domain: " domain_input
+        
+        # Validate domain format (basic validation)
+        if [[ -n "$domain_input" ]]; then
+            # Remove http:// or https:// if user included them
+            domain_input=$(echo "$domain_input" | sed 's|^https\?://||')
+            
+            # Basic domain validation (contains at least one dot and valid characters)
+            if [[ "$domain_input" =~ ^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$ ]]; then
+                log_success "Domain '$domain_input' will be added to DJANGO_ALLOWED_HOSTS" >&2
+                # Only output the domain to stdout, nothing else
+                printf "%s" "$domain_input"
+                return 0
+            else
+                log_warning "Invalid domain format: $domain_input" >&2
+                log_info "Please enter a valid domain name (e.g., example.com)" >&2
+                return 1
+            fi
+        else
+            log_warning "No domain entered, skipping domain configuration" >&2
+            return 1
+        fi
+    else
+        log_info "Skipping custom domain configuration" >&2
+        return 1
+    fi
+}
 
 # Create a temporary, production-ready compose file by injecting secrets
 create_production_config() {
@@ -271,6 +316,7 @@ create_production_config() {
     local db_pass="$2"
     local rabbit_user="$3"
     local rabbit_pass="$4"
+    local custom_domain="$5"
     
     local source="$PROJECT_FOLDER/$SOURCE_FILE"
     local temp_file="$PROJECT_FOLDER/$PROD_FILE"
@@ -282,24 +328,87 @@ create_production_config() {
     local secret_key; secret_key=$(generate_secret 50)
     local allowed_hosts; allowed_hosts="$(get_public_ip),localhost,127.0.0.1"
     
+    # Add custom domain to allowed hosts if provided
+    if [[ -n "$custom_domain" ]]; then
+        allowed_hosts="${allowed_hosts},${custom_domain}"
+        log_info "Custom domain '$custom_domain' will be added to DJANGO_ALLOWED_HOSTS"
+    fi
+    
+    # Remove trailing comma if exists
+    allowed_hosts="${allowed_hosts%,}"
+    
     # Create the production config by replacing placeholders in the source file
     # The new sed pattern handles leading whitespace to preserve YAML indentation
-    sed \
-        -e "s/^\([[:space:]]*POSTGRES_USER:\).*/\1 ${db_user}/" \
-        -e "s/^\([[:space:]]*POSTGRES_PASSWORD:\).*/\1 ${db_pass}/" \
-        -e "s/^\([[:space:]]*DATABASE_USERNAME:\).*/\1 ${db_user}/" \
-        -e "s/^\([[:space:]]*DATABASE_PASSWORD:\).*/\1 ${db_pass}/" \
-        -e "s/^\([[:space:]]*RABBITMQ_DEFAULT_USER:\).*/\1 ${rabbit_user}/" \
-        -e "s/^\([[:space:]]*RABBITMQ_DEFAULT_PASS:\).*/\1 ${rabbit_pass}/" \
-        -e "s|^\([[:space:]]*CELERY_BROKER_URL:\).*|\1 amqp://${rabbit_user}:${rabbit_pass}@rabbitmq:5672//|" \
-        -e "s/^\([[:space:]]*SECRET_KEY:\).*/\1 ${secret_key}/" \
-        -e "s/^\([[:space:]]*DJANGO_ALLOWED_HOSTS:\).*/\1 ${allowed_hosts}/" \
-        -e "s/^\([[:space:]]*DEBUG:\).*/\1 0/" \
-        "$source" > "$temp_file"
+    # Use a more robust approach: create the file line by line with proper YAML handling
+    local temp_content=""
     
+    while IFS= read -r line; do
+        case "$line" in
+            *"POSTGRES_USER:"*)
+                # Preserve indentation and replace value
+                local indent="${line%%[^[:space:]]*}"
+                temp_content+="${indent}POSTGRES_USER: ${db_user}"$'\n'
+                ;;
+            *"POSTGRES_PASSWORD:"*)
+                local indent="${line%%[^[:space:]]*}"
+                temp_content+="${indent}POSTGRES_PASSWORD: ${db_pass}"$'\n'
+                ;;
+            *"DATABASE_USERNAME:"*)
+                local indent="${line%%[^[:space:]]*}"
+                temp_content+="${indent}DATABASE_USERNAME: ${db_user}"$'\n'
+                ;;
+            *"DATABASE_PASSWORD:"*)
+                local indent="${line%%[^[:space:]]*}"
+                temp_content+="${indent}DATABASE_PASSWORD: ${db_pass}"$'\n'
+                ;;
+            *"RABBITMQ_DEFAULT_USER:"*)
+                local indent="${line%%[^[:space:]]*}"
+                temp_content+="${indent}RABBITMQ_DEFAULT_USER: ${rabbit_user}"$'\n'
+                ;;
+            *"RABBITMQ_DEFAULT_PASS:"*)
+                local indent="${line%%[^[:space:]]*}"
+                temp_content+="${indent}RABBITMQ_DEFAULT_PASS: ${rabbit_pass}"$'\n'
+                ;;
+            *"CELERY_BROKER_URL:"*)
+                local indent="${line%%[^[:space:]]*}"
+                temp_content+="${indent}CELERY_BROKER_URL: amqp://${rabbit_user}:${rabbit_pass}@rabbitmq:5672//"$'\n'
+                ;;
+            *"SECRET_KEY:"*)
+                local indent="${line%%[^[:space:]]*}"
+                # Only add SECRET_KEY once
+                if [[ "$temp_content" != *"SECRET_KEY:"* ]]; then
+                    temp_content+="${indent}SECRET_KEY: ${secret_key}"$'\n'
+                fi
+                ;;
+            *"DJANGO_ALLOWED_HOSTS:"*)
+                local indent="${line%%[^[:space:]]*}"
+                temp_content+="${indent}DJANGO_ALLOWED_HOSTS: ${allowed_hosts}"$'\n'
+                ;;
+            *"DEBUG:"*)
+                local indent="${line%%[^[:space:]]*}"
+                temp_content+="${indent}DEBUG: 0"$'\n'
+                ;;
+            *"FORCED_ALIGNMENT_SECRET_KEY:"*)
+                local indent="${line%%[^[:space:]]*}"
+                temp_content+="${indent}FORCED_ALIGNMENT_SECRET_KEY: ${secret_key}"$'\n'
+                ;;
+            *)
+                temp_content+="$line"$'\n'
+                ;;
+        esac
+    done < "$source"
+    
+    # Write to file without control characters
+    printf '%s' "$temp_content" > "$temp_file"
+
     [[ -s "$temp_file" ]] || { log_error "Production configuration file is empty or not created"; return 1; }
+
+    # Set proper permissions for the production config file (readable by owner only)
+    chmod 600 "$temp_file" 2>/dev/null || log_warning "Could not set permissions on production config file"
     
     log_debug "Production config created at: $temp_file"
+    log_debug "Generated credentials - DB: $db_user, RabbitMQ: $rabbit_user, Secret Key Length: ${#secret_key}"
+    log_info "Production configuration file created successfully"
     printf "%s" "$temp_file"
 }
 
@@ -329,6 +438,7 @@ start_and_cleanup_containers() {
         log_error "Failed to start containers"
         log_info "Displaying container logs for debugging:"
         docker compose -f "$prod_config" logs --tail=20 2>/dev/null || true
+        log_debug "Cleaning up production config file: $prod_config"
         rm -f "$prod_config"
         return 1
     fi
@@ -354,7 +464,8 @@ manage_containers() {
     fi
     
     log_info "Creating new production configuration..."
-    local prod_config; prod_config=$(create_production_config "$db_user" "$db_pass" "$rabbit_user" "$rabbit_pass")
+    # For restart/update, we don't prompt for domain again, use empty string
+    local prod_config; prod_config=$(create_production_config "$db_user" "$db_pass" "$rabbit_user" "$rabbit_pass" "")
     [[ -n "$prod_config" ]] || { log_error "Failed to get production config path"; return 1; }
     
     start_and_cleanup_containers "$prod_config"
@@ -435,7 +546,10 @@ cmd_install() {
     local final_rabbit_user=${rabbit_user:-"rabbit_$(generate_secret 8 | tr '[:upper:]' '[:lower:]')"}
     local final_rabbit_pass=${rabbit_pass:-$(generate_secret 20)}
     
-    local prod_config; prod_config=$(create_production_config "$final_db_user" "$final_db_pass" "$final_rabbit_user" "$final_rabbit_pass")
+    # Prompt for custom domain
+    local custom_domain; custom_domain=$(prompt_for_domain)
+    
+    local prod_config; prod_config=$(create_production_config "$final_db_user" "$final_db_pass" "$final_rabbit_user" "$final_rabbit_pass" "$custom_domain")
     [[ -n "$prod_config" ]] || { log_error "Failed to create production config"; return 1; }
     
     prompt_edit "$prod_config" "production docker-compose configuration"
@@ -451,6 +565,14 @@ cmd_install() {
     log_success "  RabbitMQ Username: $final_rabbit_user"
     log_success "  RabbitMQ Password: $final_rabbit_pass"
     echo; [[ -z "$db_user" && -z "$1" ]] && log_warning "Credentials were auto-generated. Save them securely!"
+    
+    # Display domain information if custom domain was added
+    if [[ -n "$custom_domain" ]]; then
+        echo; log_info "🌍 Domain Configuration:"
+        log_success "  Custom Domain: $custom_domain"
+        log_info "  Note: Make sure to configure your DNS to point to this server's IP: $(get_public_ip)"
+    fi
+    
     echo; log_info "🌐 Access your API at: http://$(get_public_ip)"
     log_info "📊 View logs: docker compose -f $PROJECT_FOLDER/$SOURCE_FILE logs -f"
     log_info "🛑 Stop services: docker compose -f $PROJECT_FOLDER/$SOURCE_FILE down"
@@ -503,6 +625,10 @@ OPTIONS FOR (restart AND update):
     --rabbituser <user> (required) RabbitMQ username
     --rabbitpass <pass> (required) RabbitMQ password
 
+FEATURES:
+    🌍 Custom Domain Support: During installation, you can add a custom domain
+      to DJANGO_ALLOWED_HOSTS for production deployments.
+
 GLOBAL OPTIONS:
     --help, -h         Show this help message.
     --version, -v      Show version
@@ -525,8 +651,13 @@ show_version() {
 cleanup() {
     log_debug "Performing cleanup..."
     if [[ -n "${PROJECT_FOLDER:-}" ]] && [[ -d "$PROJECT_FOLDER" ]]; then
-        rm -f "$PROJECT_FOLDER/$PROD_FILE"
-        log_debug "Cleaned up production config files"
+        if [[ -f "$PROJECT_FOLDER/$PROD_FILE" ]]; then
+            log_debug "Cleaning up production config file: $PROJECT_FOLDER/$PROD_FILE"
+            rm -f "$PROJECT_FOLDER/$PROD_FILE"
+            log_debug "Production config files cleaned up"
+        else
+            log_debug "Production config file already cleaned up or doesn't exist"
+        fi
     fi
 }
 
