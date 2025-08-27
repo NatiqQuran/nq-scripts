@@ -4,7 +4,7 @@
 # Description: A script to set up and run the NatiqQuran API project using Docker.
 # It handles Docker installation, project folder setup, and initial configuration.
 # Features: Complete lifecycle management, user-friendly, enhanced security, comprehensive logging
-# Version: 2.3
+# Version: 2.4
 # Author: Natiq dev Team
 # Usage: bash setup.sh [COMMAND] [OPTIONS]
 #
@@ -21,7 +21,7 @@ IFS=$'\n\t'
 # ==============================================================================
 
 readonly SCRIPT_NAME="$(basename "$0")"
-readonly SCRIPT_VERSION="2.3"
+readonly SCRIPT_VERSION="2.4"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # --- Project Configuration ---
@@ -115,6 +115,97 @@ generate_secret() {
     fi
 
     echo "$secret"
+}
+
+# Create .env file with random generated values
+create_env_file() {
+    local env_file="$PROJECT_FOLDER/.env"
+    
+    log_info "Creating .env file with random generated values..."
+    
+    # Generate random values
+    local postgres_user="user_$(generate_secret 8 | tr '[:upper:]' '[:lower:]')"
+    local postgres_password=$(generate_secret 20)
+    local database_username="$postgres_user"  # Same as POSTGRES_USER
+    local database_password="$postgres_password"  # Same as POSTGRES_PASSWORD
+    local rabbit_user="rabbit_$(generate_secret 8 | tr '[:upper:]' '[:lower:]')"
+    local rabbitmq_pass=$(generate_secret 20)
+    local celery_broker_url="amqp://${rabbit_user}:${rabbitmq_pass}@rabbitmq:5672//"
+    local secret_key=$(generate_secret 50)
+    local django_allowed_hosts="$(get_public_ip)"
+    local debug="0"
+    local forced_alignment_secret_key="$secret_key"  # Same as SECRET_KEY
+    
+    # Create .env file content
+    cat > "$env_file" << EOF
+# NatiqQuran API Environment Configuration
+# Generated automatically - You CAN edit these values if needed
+# This file will be deleted after configuration is applied
+# 
+# IMPORTANT: Any changes you make to this file will be used in the final configuration
+# Make sure to save your credentials securely as they cannot be recovered later
+
+POSTGRES_USER=$postgres_user
+POSTGRES_PASSWORD=$postgres_password
+DATABASE_USERNAME=$database_username
+DATABASE_PASSWORD=$database_password
+RABBIT_USER=$rabbit_user
+RABBITMQ_PASS=$rabbitmq_pass
+CELERY_BROKER_URL=$celery_broker_url
+SECRET_KEY=$secret_key
+DJANGO_ALLOWED_HOSTS=$django_allowed_hosts
+DEBUG=$debug
+FORCED_ALIGNMENT_SECRET_KEY=$forced_alignment_secret_key
+EOF
+
+    # Set proper permissions (readable by owner only)
+    chmod 600 "$env_file" 2>/dev/null || log_warning "Could not set permissions on .env file"
+    
+    log_success ".env file created successfully at: $env_file"
+    
+    # Return the path to the .env file
+    printf "%s" "$env_file"
+}
+
+# Read values from .env file
+read_env_values() {
+    local env_file="$1"
+    
+    [[ -f "$env_file" ]] || { log_error ".env file not found: $env_file"; return 1; }
+    
+    log_debug "Reading values from .env file: $env_file"
+    
+    # Source the .env file to get variables
+    set -a  # automatically export all variables
+    source "$env_file"
+    set +a  # turn off automatic export
+    
+    # Return values as a pipe-separated string: db_user|db_pass|rabbit_user|rabbit_pass|secret_key|allowed_hosts|debug
+    printf "%s|%s|%s|%s|%s|%s|%s" "$POSTGRES_USER" "$POSTGRES_PASSWORD" "$RABBIT_USER" "$RABBITMQ_PASS" "$SECRET_KEY" "$DJANGO_ALLOWED_HOSTS" "$DEBUG"
+}
+
+# Securely delete .env file to prevent recovery
+secure_cleanup_env() {
+    local env_file="$1"
+    
+    [[ -f "$env_file" ]] || { log_debug ".env file already cleaned up or doesn't exist"; return 0; }
+    
+    log_debug "Securely cleaning up .env file: $env_file"
+    
+    # Overwrite file content with random data before deletion
+    if command_exists shred; then
+        shred -u -z -n 3 "$env_file" 2>/dev/null || {
+            # Fallback if shred fails
+            dd if=/dev/urandom of="$env_file" bs=1M count=1 2>/dev/null || true
+            rm -f "$env_file"
+        }
+    else
+        # Fallback method: overwrite with random data then delete
+        dd if=/dev/urandom of="$env_file" bs=1M count=1 2>/dev/null || true
+        rm -f "$env_file"
+    fi
+    
+    log_debug ".env file securely cleaned up"
 }
 
 get_public_ip() {
@@ -242,100 +333,39 @@ prompt_edit() {
     fi
 }
 
-# Prompt user for credentials if they weren't provided as flags
-prompt_for_credentials() {
-    log_info "Credential flags were not provided. Entering interactive setup."
-    echo -e "You can provide credentials in two ways:"
-    echo -e "1. On a single line: ${YELLOW}dbname=user dbpass=secret ...${NC}"
-    echo -e "2. On multiple lines, ending each line with a backslash (${YELLOW}\\${NC})"
-    echo -e "   Example:"
-    echo -e "   ${YELLOW}dbname=myuser \\${NC}"
-    echo -e "   ${YELLOW}dbpass=mypassword${NC}"
-    echo -e "Type ${GREEN}END${NC} on a new line when you are finished."
-    echo
 
-    local all_input=""
-    while IFS= read -r line; do
-        # Stop reading if the user types END
-        [[ "$line" == "END" ]] && break
-        # Append the line to the full input string, removing trailing backslashes
-        all_input+="${line%\\} "
-    done
 
-    # Parse the collected input string to find key=value pairs
-    # This pattern handles spaces around the '=' sign
-    db_user=$(echo "$all_input" | grep -o 'dbname\s*=\s*[^ ]*' | head -n 1 | cut -d'=' -f2- | tr -d ' ')
-    db_pass=$(echo "$all_input" | grep -o 'dbpass\s*=\s*[^ ]*' | head -n 1 | cut -d'=' -f2- | tr -d ' ')
-    rabbit_user=$(echo "$all_input" | grep -o 'rabbituser\s*=\s*[^ ]*' | head -n 1 | cut -d'=' -f2- | tr -d ' ')
-    rabbit_pass=$(echo "$all_input" | grep -o 'rabbitpass\s*=\s*[^ ]*' | head -n 1 | cut -d'=' -f2- | tr -d ' ')
 
-    # Export variables to be used by the calling function
-    export db_user db_pass rabbit_user rabbit_pass
-}
 
-# Prompt user for domain input if they want to add custom domain
-prompt_for_domain() {
-    # Use stderr for all output to avoid contaminating stdout
-    echo >&2
-    log_info "Domain Configuration" >&2
-    read -p "Do you want to add a custom domain to DJANGO_ALLOWED_HOSTS? (y/N): " -t "$TIMEOUT" add_domain || add_domain="n"
-    
-    if [[ "${add_domain,,}" =~ ^y ]]; then
-        echo -e "Please enter your domain name (e.g., ${YELLOW}example.com${NC} or ${YELLOW}api.mysite.com${NC}):" >&2
-        read -p "Domain: " domain_input
-        
-        # Validate domain format (basic validation)
-        if [[ -n "$domain_input" ]]; then
-            # Remove http:// or https:// if user included them
-            domain_input=$(echo "$domain_input" | sed 's|^https\?://||')
-            
-            # Basic domain validation (contains at least one dot and valid characters)
-            if [[ "$domain_input" =~ ^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$ ]]; then
-                log_success "Domain '$domain_input' will be added to DJANGO_ALLOWED_HOSTS" >&2
-                # Only output the domain to stdout, nothing else
-                printf "%s" "$domain_input"
-                return 0
-            else
-                log_warning "Invalid domain format: $domain_input" >&2
-                log_info "Please enter a valid domain name (e.g., example.com)" >&2
-                return 1
-            fi
-        else
-            log_warning "No domain entered, skipping domain configuration" >&2
-            return 1
-        fi
-    else
-        log_info "Skipping custom domain configuration" >&2
-        return 1
-    fi
-}
-
-# Create a temporary, production-ready compose file by injecting secrets
+# Create a temporary, production-ready compose file by injecting secrets from .env
 create_production_config() {
-    local db_user="$1"
-    local db_pass="$2"
-    local rabbit_user="$3"
-    local rabbit_pass="$4"
-    local custom_domain="$5"
+    local env_file="$1"
     
     local source="$PROJECT_FOLDER/$SOURCE_FILE"
     local temp_file="$PROJECT_FOLDER/$PROD_FILE"
     
     [[ -f "$source" ]] || { log_error "Source file not found: $source"; return 1; }
+    [[ -f "$env_file" ]] || { log_error ".env file not found: $env_file"; return 1; }
     
-    log_debug "Creating production configuration from source..."
+    log_debug "Creating production configuration from source using .env values..."
     
-    local secret_key; secret_key=$(generate_secret 50)
-    local allowed_hosts; allowed_hosts="$(get_public_ip),localhost,127.0.0.1"
+    # Read values from .env file
+    local env_values; env_values=$(read_env_values "$env_file")
+    [[ -n "$env_values" ]] || { log_error "Failed to read .env values"; return 1; }
     
-    # Add custom domain to allowed hosts if provided
-    if [[ -n "$custom_domain" ]]; then
-        allowed_hosts="${allowed_hosts},${custom_domain}"
-        log_info "Custom domain '$custom_domain' will be added to DJANGO_ALLOWED_HOSTS"
-    fi
+    # Parse the returned values using pipe delimiter
+    local db_user db_pass rabbit_user rabbit_pass secret_key allowed_hosts debug_value
+    IFS='|' read -r db_user db_pass rabbit_user rabbit_pass secret_key allowed_hosts debug_value <<< "$env_values"
     
-    # Remove trailing comma if exists
-    allowed_hosts="${allowed_hosts%,}"
+    # Debug: check parsed values
+    log_debug "Parsed values from .env:"
+    log_debug "  db_user: '$db_user'"
+    log_debug "  db_pass: '$db_pass'"
+    log_debug "  rabbit_user: '$rabbit_user'"
+    log_debug "  rabbit_pass: '$rabbit_pass'"
+    log_debug "  secret_key: '$secret_key'"
+    log_debug "  allowed_hosts: '$allowed_hosts'"
+    log_debug "  debug_value: '$debug_value'"
     
     # Create the production config by replacing placeholders in the source file
     # The new sed pattern handles leading whitespace to preserve YAML indentation
@@ -386,7 +416,7 @@ create_production_config() {
                 ;;
             *"DEBUG:"*)
                 local indent="${line%%[^[:space:]]*}"
-                temp_content+="${indent}DEBUG: 0"$'\n'
+                temp_content+="${indent}DEBUG: ${debug_value}"$'\n'
                 ;;
             *"FORCED_ALIGNMENT_SECRET_KEY:"*)
                 local indent="${line%%[^[:space:]]*}"
@@ -419,6 +449,7 @@ create_production_config() {
 # Start containers using the production config and clean up afterwards
 start_and_cleanup_containers() {
     local prod_config="$1"
+    local env_file="$2"
     
     log_info "Starting containers..."
     local start_time; start_time=$(date +%s)
@@ -431,6 +462,11 @@ start_and_cleanup_containers() {
         log_debug "Cleaning up production config file: $prod_config"
         rm -f "$prod_config"
         
+        # Securely clean up .env file after successful container start
+        if [[ -n "$env_file" ]]; then
+            secure_cleanup_env "$env_file"
+        fi
+        
         log_info "Waiting ${WAIT_TIME}s for services to initialize..."
         sleep "$WAIT_TIME"
         return 0
@@ -440,6 +476,12 @@ start_and_cleanup_containers() {
         docker compose -f "$prod_config" logs --tail=20 2>/dev/null || true
         log_debug "Cleaning up production config file: $prod_config"
         rm -f "$prod_config"
+        
+        # Securely clean up .env file even on failure
+        if [[ -n "$env_file" ]]; then
+            secure_cleanup_env "$env_file"
+        fi
+        
         return 1
     fi
 }
@@ -447,13 +489,11 @@ start_and_cleanup_containers() {
 # A wrapper for restart/update commands
 manage_containers() {
     local action="$1"
-    local db_user="$2"
-    local db_pass="$3"
-    local rabbit_user="$4"
-    local rabbit_pass="$5"
+    local env_file="$2"
     
     local source_file="$PROJECT_FOLDER/$SOURCE_FILE"
     [[ -f "$source_file" ]] || { log_error "Project not found. Run 'install' first."; return 1; }
+    [[ -f "$env_file" ]] || { log_error ".env file not found. Run 'install' first."; return 1; }
     
     log_info "Stopping all services..."
     docker compose -f "$source_file" down --remove-orphans 2>/dev/null || log_warning "Some containers may not have stopped cleanly."
@@ -464,8 +504,7 @@ manage_containers() {
     fi
     
     log_info "Creating new production configuration..."
-    # For restart/update, we don't prompt for domain again, use empty string
-    local prod_config; prod_config=$(create_production_config "$db_user" "$db_pass" "$rabbit_user" "$rabbit_pass" "")
+    local prod_config; prod_config=$(create_production_config "$env_file")
     [[ -n "$prod_config" ]] || { log_error "Failed to get production config path"; return 1; }
     
     start_and_cleanup_containers "$prod_config"
@@ -495,39 +534,11 @@ create_superuser() {
 # === MAIN COMMANDS & VALIDATION
 # ==============================================================================
 
-# Validate that all required credentials are provided for management commands
-validate_credentials() {
-    local action="$1"
-    local db_user="$2"
-    local db_pass="$3"
-    local rabbit_user="$4"
-    local rabbit_pass="$5"
-    
-    if [[ "$action" != "install" ]]; then
-        local missing=()
-        [[ -z "$db_user" ]] && missing+=("--dbname")
-        [[ -z "$db_pass" ]] && missing+=("--dbpass")
-        [[ -z "$rabbit_user" ]] && missing+=("--rabbituser")
-        [[ -z "$rabbit_pass" ]] && missing+=("--rabbitpass")
-        
-        if [[ ${#missing[@]} -gt 0 ]]; then
-            log_error "Missing required credentials for '$action': ${missing[*]}"
-            log_info "Usage: $SCRIPT_NAME $action --dbname <user> --dbpass <pass> --rabbituser <user> --rabbitpass <pass>"
-            return 1
-        fi
-    fi
-}
+
 
 # The main installation command
 cmd_install() {
-    # Check if any credential flag is provided. If not, use interactive mode.
-    if [[ -z "$1" && -z "$2" && -z "$3" && -z "$4" ]]; then
-        prompt_for_credentials
-    else
-        # This part handles credentials passed via flags
-        export db_user="$1" db_pass="$2" rabbit_user="$3" rabbit_pass="$4"
-    fi
-    local skip_docker="$5" skip_firewall="$6"
+    local skip_docker="$1" skip_firewall="$2"
 
     check_system || return 1
     check_internet || return 1
@@ -540,38 +551,63 @@ cmd_install() {
     
     download_files || return 1
     
-    # Use provided credentials or generate new ones if they are still empty
-    local final_db_user=${db_user:-"user_$(generate_secret 8 | tr '[:upper:]' '[:lower:]')"}
-    local final_db_pass=${db_pass:-$(generate_secret 20)}
-    local final_rabbit_user=${rabbit_user:-"rabbit_$(generate_secret 8 | tr '[:upper:]' '[:lower:]')"}
-    local final_rabbit_pass=${rabbit_pass:-$(generate_secret 20)}
+    # Create .env file with random generated values
+    local env_file; env_file=$(create_env_file)
+    [[ -n "$env_file" ]] || { log_error "Failed to create .env file"; return 1; }
     
-    # Prompt for custom domain
-    local custom_domain; custom_domain=$(prompt_for_domain)
+    # Prompt user to edit .env file if desired
+    echo
+    log_info "🔐 I have created a .env file with randomly generated secure values."
+    log_info "📝 You can now choose to edit these values or use them as-is."
+    log_info "💡 The .env file contains all the credentials and configuration needed for your API."
+    echo
+    log_warning "⚠️  Important Notes:"
+    log_warning "   • Any changes you make will be used in the final configuration"
+    log_warning "   • This file will be securely deleted after deployment"
+    log_warning "   • Make sure to save your credentials securely - they cannot be recovered!"
+    echo
     
-    local prod_config; prod_config=$(create_production_config "$final_db_user" "$final_db_pass" "$final_rabbit_user" "$final_rabbit_pass" "$custom_domain")
+    read -p "Do you want to edit the .env file? (y/N): " -t "$TIMEOUT" edit_env || edit_env="n"
+    
+    if [[ "${edit_env,,}" =~ ^y ]]; then
+        log_info "🖊️  Opening .env file for editing..."
+        log_info "💡 You can modify any of the generated values as needed."
+        log_info "💾 Remember to save the file when you're done editing."
+        echo
+        
+        for editor in nano vim vi; do
+            if command_exists "$editor"; then
+                log_info "📂 Opening with $editor..."
+                "$editor" "$env_file"
+                log_success "✅ Edit completed successfully"
+                log_info "🔄 Your custom values will now be used in the configuration"
+                break
+            fi
+        done
+    else
+        log_info "✅ Using generated values as-is."
+        log_info "🔒 The randomly generated secure credentials will be applied."
+    fi
+    
+    local prod_config; prod_config=$(create_production_config "$env_file")
     [[ -n "$prod_config" ]] || { log_error "Failed to create production config"; return 1; }
     
     prompt_edit "$prod_config" "production docker-compose configuration"
     prompt_edit "$PROJECT_FOLDER/$NGINX_FILE" "nginx configuration"
     
-    start_and_cleanup_containers "$prod_config" || return 1
+    start_and_cleanup_containers "$prod_config" "$env_file" || return 1
     create_superuser
     
     echo; echo -e "${GREEN}========================================\n🎉 Installation completed successfully!\n========================================${NC}"; echo
-    log_info "🔒 Your credentials (SAVE THESE!):"
-    log_success "  Database Username: $final_db_user"
-    log_success "  Database Password: $final_db_pass"
-    log_success "  RabbitMQ Username: $final_rabbit_user"
-    log_success "  RabbitMQ Password: $final_rabbit_pass"
-    echo; [[ -z "$db_user" && -z "$1" ]] && log_warning "Credentials were auto-generated. Save them securely!"
-    
-    # Display domain information if custom domain was added
-    if [[ -n "$custom_domain" ]]; then
-        echo; log_info "🌍 Domain Configuration:"
-        log_success "  Custom Domain: $custom_domain"
-        log_info "  Note: Make sure to configure your DNS to point to this server's IP: $(get_public_ip)"
-    fi
+    log_info "🔐 Configuration Summary:"
+    log_info "   • All credentials and settings have been applied from .env file"
+    log_info "   • The .env file has been securely deleted for security"
+    log_info "   • Your API is now configured and ready to use"
+    echo
+    log_warning "⚠️  Security Reminder:"
+    log_warning "   • Make sure to save your credentials securely"
+    log_warning "   • The .env file cannot be recovered"
+    log_warning "   • Keep your credentials in a safe place"
     
     echo; log_info "🌐 Access your API at: http://$(get_public_ip)"
     log_info "📊 View logs: docker compose -f $PROJECT_FOLDER/$SOURCE_FILE logs -f"
@@ -580,17 +616,17 @@ cmd_install() {
 
 # The restart command
 cmd_restart() {
-    local db_user="$1" db_pass="$2" rabbit_user="$3" rabbit_pass="$4"
-    validate_credentials "restart" "$db_user" "$db_pass" "$rabbit_user" "$rabbit_pass" || return 1
-    manage_containers "restart" "$db_user" "$db_pass" "$rabbit_user" "$rabbit_pass"
+    local env_file="$PROJECT_FOLDER/.env"
+    [[ -f "$env_file" ]] || { log_error ".env file not found. Run 'install' first."; return 1; }
+    manage_containers "restart" "$env_file"
     log_success "🎉 Services restarted successfully!"
 }
 
 # The update command
 cmd_update() {
-    local db_user="$1" db_pass="$2" rabbit_user="$3" rabbit_pass="$4"
-    validate_credentials "update" "$db_user" "$db_pass" "$rabbit_user" "$rabbit_pass" || return 1
-    manage_containers "update" "$db_user" "$db_pass" "$rabbit_user" "$rabbit_pass"
+    local env_file="$PROJECT_FOLDER/.env"
+    [[ -f "$env_file" ]] || { log_error ".env file not found. Run 'install' first."; return 1; }
+    manage_containers "update" "$env_file"
     log_success "🎉 Services updated successfully!"
 }
 
@@ -608,26 +644,17 @@ USAGE:
 
 COMMANDS:
     install    (Default) Run full installation and setup (default)
-    restart    Restart all services. Requires all credential flags.
-    update     Pull the latest images and restart. Requires all credential flags.
+    restart    Restart all services (requires existing .env file)
+    update     Pull the latest images and restart (requires existing .env file)
 
 OPTIONS FOR (install):
     --no-install        (Optional) Skip Docker installation
     --no-firewall       (Optional) Skip firewall setup
-    --dbname <user>     (Optional) Custom database username
-    --dbpass <pass>     (Optional) Custom database password
-    --rabbituser <user> (Optional) Custom RabbitMQ username
-    --rabbitpass <pass> (Optional) Custom RabbitMQ password
-
-OPTIONS FOR (restart AND update):
-    --dbname <user>     (required) Database username 
-    --dbpass <pass>     (required) Database password
-    --rabbituser <user> (required) RabbitMQ username
-    --rabbitpass <pass> (required) RabbitMQ password
 
 FEATURES:
-    🌍 Custom Domain Support: During installation, you can add a custom domain
-      to DJANGO_ALLOWED_HOSTS for production deployments.
+    🔐 Automatic Credential Generation: Creates .env file with random secure values
+    ✏️  Interactive Editing: Option to edit generated values before deployment
+    🗑️  Secure Cleanup: .env file is securely deleted after configuration
 
 GLOBAL OPTIONS:
     --help, -h         Show this help message.
@@ -636,9 +663,9 @@ GLOBAL OPTIONS:
 
 EXAMPLES:
     bash ${SCRIPT_NAME} install
-    bash ${SCRIPT_NAME} install --dbname myuser --dbpass mysecret
-    bash ${SCRIPT_NAME} restart --dbname myuser --dbpass mysecret --rabbituser ruser --rabbitpass rpass
-    bash ${SCRIPT_NAME} update --dbname myuser --dbpass mysecret --rabbituser ruser --rabbitpass rpass
+    bash ${SCRIPT_NAME} install --no-firewall
+    bash ${SCRIPT_NAME} restart
+    bash ${SCRIPT_NAME} update
 EOF
 }
 
@@ -682,20 +709,12 @@ main() {
     # Initialize option variables
     local skip_docker="false"
     local skip_firewall="false"
-    local db_user=""
-    local db_pass=""
-    local rabbit_user=""
-    local rabbit_pass=""
     
     # Parse all options
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --no-install) skip_docker="true"; shift ;;
             --no-firewall) skip_firewall="true"; shift ;;
-            --dbname) db_user="$2"; shift 2 ;;
-            --dbpass) db_pass="$2"; shift 2 ;;
-            --rabbituser) rabbit_user="$2"; shift 2 ;;
-            --rabbitpass) rabbit_pass="$2"; shift 2 ;;
             --debug) export DEBUG=1; shift ;;
             --help|-h) show_help; exit 0 ;;
             --version|-v) show_version; exit 0 ;;
@@ -713,13 +732,13 @@ main() {
     # Execute the chosen command
     case "$command" in
         install)
-            cmd_install "$db_user" "$db_pass" "$rabbit_user" "$rabbit_pass" "$skip_docker" "$skip_firewall"
+            cmd_install "$skip_docker" "$skip_firewall"
             ;;
         restart)
-            cmd_restart "$db_user" "$db_pass" "$rabbit_user" "$rabbit_pass"
+            cmd_restart
             ;;
         update)
-            cmd_update "$db_user" "$db_pass" "$rabbit_user" "$rabbit_pass"
+            cmd_update
             ;;
         *)
             log_error "Unknown command: $command"
