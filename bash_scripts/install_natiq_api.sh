@@ -162,6 +162,10 @@ FORCED_ALIGNMENT_SECRET_KEY=$forced_alignment_secret_key
 AWS_ACCESS_KEY_ID=example123
 AWS_SECRET_ACCESS_KEY=secretExample
 AWS_S3_ENDPOINT_URL=https://example.com
+
+# Nginx Configuration
+# Maximum allowed size for client request body (file uploads)
+NGINX_CLIENT_MAX_BODY_SIZE=10M
 EOF
 
     # Set proper permissions (readable by owner only)
@@ -186,8 +190,8 @@ read_env_values() {
     source "$env_file"
     set +a  # turn off automatic export
     
-    # Return values as a pipe-separated string: db_user|db_pass|rabbit_user|rabbit_pass|secret_key|allowed_hosts|debug|aws_key|aws_secret|aws_endpoint
-    printf "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s" "$POSTGRES_USER" "$POSTGRES_PASSWORD" "$RABBIT_USER" "$RABBITMQ_PASS" "$SECRET_KEY" "$DJANGO_ALLOWED_HOSTS" "$DEBUG" "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" "$AWS_S3_ENDPOINT_URL"
+    # Return values as a pipe-separated string: db_user|db_pass|rabbit_user|rabbit_pass|secret_key|allowed_hosts|debug|aws_key|aws_secret|aws_endpoint|nginx_max_body
+    printf "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s" "$POSTGRES_USER" "$POSTGRES_PASSWORD" "$RABBIT_USER" "$RABBITMQ_PASS" "$SECRET_KEY" "$DJANGO_ALLOWED_HOSTS" "$DEBUG" "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" "$AWS_S3_ENDPOINT_URL" "$NGINX_CLIENT_MAX_BODY_SIZE"
 }
 
 # Securely delete .env file to prevent recovery
@@ -343,6 +347,70 @@ prompt_edit() {
 
 
 
+# Process nginx.conf file to add/update client_max_body_size
+process_nginx_config() {
+    local nginx_file="$1"
+    local max_body_size="$2"
+    
+    [[ -f "$nginx_file" ]] || { log_error "Nginx config file not found: $nginx_file"; return 1; }
+    
+    log_debug "Processing nginx config: $nginx_file with max body size: $max_body_size"
+    
+    local temp_content=""
+    local in_server_block=false
+    local client_max_body_added=false
+    local server_indent=""
+    
+    # Read nginx.conf line by line
+    while IFS= read -r line; do
+        case "$line" in
+            *"server"*"{"*)
+                # Entering server block
+                in_server_block=true
+                server_indent="${line%%[^[:space:]]*}"
+                temp_content+="$line"$'\n'
+                ;;
+            *"client_max_body_size"*)
+                # Replace existing client_max_body_size
+                if [[ "$in_server_block" == "true" ]]; then
+                    local indent="${line%%[^[:space:]]*}"
+                    temp_content+="${indent}client_max_body_size ${max_body_size};"$'\n'
+                    client_max_body_added=true
+                else
+                    temp_content+="$line"$'\n'
+                fi
+                ;;
+            *"include mime.types;"*)
+                # After include mime.types, add client_max_body_size if not already added
+                temp_content+="$line"$'\n'
+                if [[ "$in_server_block" == "true" && "$client_max_body_added" == "false" ]]; then
+                    temp_content+="${server_indent}    client_max_body_size ${max_body_size};"$'\n'
+                    client_max_body_added=true
+                fi
+                ;;
+            *"}"*)
+                # Exiting server block
+                if [[ "$in_server_block" == "true" ]]; then
+                    in_server_block=false
+                    # If we haven't added client_max_body_size yet, add it before closing brace
+                    if [[ "$client_max_body_added" == "false" ]]; then
+                        temp_content+="${server_indent}    client_max_body_size ${max_body_size};"$'\n'
+                    fi
+                fi
+                temp_content+="$line"$'\n'
+                ;;
+            *)
+                temp_content+="$line"$'\n'
+                ;;
+        esac
+    done < "$nginx_file"
+    
+    # Write processed content back to nginx file
+    printf '%s' "$temp_content" > "$nginx_file"
+    
+    log_debug "Nginx config processed successfully"
+}
+
 # Create a temporary, production-ready compose file by injecting secrets from .env
 create_production_config() {
     local env_file="$1"
@@ -360,8 +428,8 @@ create_production_config() {
     [[ -n "$env_values" ]] || { log_error "Failed to read .env values"; return 1; }
     
     # Parse the returned values using pipe delimiter
-    local db_user db_pass rabbit_user rabbit_pass secret_key allowed_hosts debug_value aws_key aws_secret aws_endpoint
-    IFS='|' read -r db_user db_pass rabbit_user rabbit_pass secret_key allowed_hosts debug_value aws_key aws_secret aws_endpoint <<< "$env_values"
+    local db_user db_pass rabbit_user rabbit_pass secret_key allowed_hosts debug_value aws_key aws_secret aws_endpoint nginx_max_body
+    IFS='|' read -r db_user db_pass rabbit_user rabbit_pass secret_key allowed_hosts debug_value aws_key aws_secret aws_endpoint nginx_max_body <<< "$env_values"
     
     # Debug: check parsed values
     log_debug "Parsed values from .env:"
@@ -375,6 +443,7 @@ create_production_config() {
     log_debug "  aws_key: '$aws_key'"
     log_debug "  aws_secret: '$aws_secret'"
     log_debug "  aws_endpoint: '$aws_endpoint'"
+    log_debug "  nginx_max_body: '$nginx_max_body'"
     
     # Create the production config by replacing placeholders in the source file
     # The new sed pattern handles leading whitespace to preserve YAML indentation
@@ -496,6 +565,7 @@ create_production_config() {
     log_debug "Production config created at: $temp_file"
     log_debug "Generated credentials - DB: $db_user, RabbitMQ: $rabbit_user, Secret Key Length: ${#secret_key}"
     log_debug "AWS credentials - Key: $aws_key, Endpoint: $aws_endpoint"
+    log_debug "Nginx max body size: $nginx_max_body"
     log_info "Production configuration file created successfully"
     printf "%s" "$temp_file"
 }
@@ -565,7 +635,21 @@ manage_containers() {
     local prod_config; prod_config=$(create_production_config "$env_file")
     [[ -n "$prod_config" ]] || { log_error "Failed to get production config path"; return 1; }
     
-    start_and_cleanup_containers "$prod_config"
+    # Process nginx config for restart/update commands
+    local nginx_max_body; nginx_max_body=$(grep "^NGINX_CLIENT_MAX_BODY_SIZE=" "$env_file" | cut -d'=' -f2)
+    if [[ -n "$nginx_max_body" ]]; then
+        log_info "Processing nginx configuration..."
+        if process_nginx_config "$PROJECT_FOLDER/$NGINX_FILE" "$nginx_max_body"; then
+            log_success "Nginx configuration updated with max body size: $nginx_max_body"
+        else
+            log_warning "Failed to update nginx configuration"
+        fi
+    else
+        log_warning "NGINX_CLIENT_MAX_BODY_SIZE not found in .env file, using default"
+        nginx_max_body="10M"
+    fi
+    
+    start_and_cleanup_containers "$prod_config" "$env_file"
 }
 
 # Create a Django superuser interactively
@@ -604,8 +688,8 @@ cmd_install() {
     # log_info "Updating package lists..."
     # if command_exists apt-get; then sudo apt-get update -qq; fi
     
-    setup_docker "$skip_docker" || return 1
-    [[ "$skip_firewall" == "false" ]] && { setup_firewall || log_warning "Firewall setup failed"; }
+    # setup_docker "$skip_docker" || return 1
+    # [[ "$skip_firewall" == "false" ]] && { setup_firewall || log_warning "Firewall setup failed"; }
     
     download_files || return 1
     
@@ -619,6 +703,7 @@ cmd_install() {
     log_info "📝 You can now choose to edit these values or use them as-is."
     log_info "💡 The .env file contains all the credentials and configuration needed for your API."
     log_info "☁️  AWS/S3 configuration is included for cloud storage access."
+    log_info "🌐 Nginx configuration includes customizable max body size for file uploads."
     echo
     log_warning "⚠️  Important Notes:"
     log_warning "   • Any changes you make will be used in the final configuration"
@@ -652,6 +737,26 @@ cmd_install() {
     [[ -n "$prod_config" ]] || { log_error "Failed to create production config"; return 1; }
     
     prompt_edit "$prod_config" "production docker-compose configuration"
+    
+    # Process nginx.conf to add/update client_max_body_size
+    log_info "Processing nginx configuration..."
+    local nginx_max_body; nginx_max_body=$(grep "^NGINX_CLIENT_MAX_BODY_SIZE=" "$env_file" | cut -d'=' -f2)
+    if [[ -n "$nginx_max_body" ]]; then
+        if process_nginx_config "$PROJECT_FOLDER/$NGINX_FILE" "$nginx_max_body"; then
+            log_success "Nginx configuration updated with max body size: $nginx_max_body"
+        else
+            log_warning "Failed to update nginx configuration"
+        fi
+    else
+        log_warning "NGINX_CLIENT_MAX_BODY_SIZE not found in .env file, using default"
+        nginx_max_body="10M"
+        if process_nginx_config "$PROJECT_FOLDER/$NGINX_FILE" "$nginx_max_body"; then
+            log_success "Nginx configuration updated with default max body size: $nginx_max_body"
+        else
+            log_warning "Failed to update nginx configuration with default value"
+        fi
+    fi
+    
     prompt_edit "$PROJECT_FOLDER/$NGINX_FILE" "nginx configuration"
     
     start_and_cleanup_containers "$prod_config" "$env_file" || return 1
@@ -661,6 +766,7 @@ cmd_install() {
     log_info "🔐 Configuration Summary:"
     log_info "   • All credentials and settings have been applied from .env file"
     log_info "   • AWS/S3 configuration has been configured for cloud storage"
+    log_info "   • Nginx max body size has been set to: $nginx_max_body"
     log_info "   • The .env file has been securely deleted for security"
     log_info "   • Your API is now configured and ready to use"
     echo
