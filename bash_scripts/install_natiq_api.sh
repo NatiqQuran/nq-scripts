@@ -156,6 +156,12 @@ SECRET_KEY=$secret_key
 DJANGO_ALLOWED_HOSTS=$django_allowed_hosts
 DEBUG=$debug
 FORCED_ALIGNMENT_SECRET_KEY=$forced_alignment_secret_key
+
+# AWS Configuration for S3 Storage
+# Edit these values according to your AWS/S3-compatible storage configuration
+AWS_ACCESS_KEY_ID=example123
+AWS_SECRET_ACCESS_KEY=secretExample
+AWS_S3_ENDPOINT_URL=https://example.com
 EOF
 
     # Set proper permissions (readable by owner only)
@@ -180,8 +186,8 @@ read_env_values() {
     source "$env_file"
     set +a  # turn off automatic export
     
-    # Return values as a pipe-separated string: db_user|db_pass|rabbit_user|rabbit_pass|secret_key|allowed_hosts|debug
-    printf "%s|%s|%s|%s|%s|%s|%s" "$POSTGRES_USER" "$POSTGRES_PASSWORD" "$RABBIT_USER" "$RABBITMQ_PASS" "$SECRET_KEY" "$DJANGO_ALLOWED_HOSTS" "$DEBUG"
+    # Return values as a pipe-separated string: db_user|db_pass|rabbit_user|rabbit_pass|secret_key|allowed_hosts|debug|aws_key|aws_secret|aws_endpoint
+    printf "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s" "$POSTGRES_USER" "$POSTGRES_PASSWORD" "$RABBIT_USER" "$RABBITMQ_PASS" "$SECRET_KEY" "$DJANGO_ALLOWED_HOSTS" "$DEBUG" "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" "$AWS_S3_ENDPOINT_URL"
 }
 
 # Securely delete .env file to prevent recovery
@@ -354,8 +360,8 @@ create_production_config() {
     [[ -n "$env_values" ]] || { log_error "Failed to read .env values"; return 1; }
     
     # Parse the returned values using pipe delimiter
-    local db_user db_pass rabbit_user rabbit_pass secret_key allowed_hosts debug_value
-    IFS='|' read -r db_user db_pass rabbit_user rabbit_pass secret_key allowed_hosts debug_value <<< "$env_values"
+    local db_user db_pass rabbit_user rabbit_pass secret_key allowed_hosts debug_value aws_key aws_secret aws_endpoint
+    IFS='|' read -r db_user db_pass rabbit_user rabbit_pass secret_key allowed_hosts debug_value aws_key aws_secret aws_endpoint <<< "$env_values"
     
     # Debug: check parsed values
     log_debug "Parsed values from .env:"
@@ -366,14 +372,37 @@ create_production_config() {
     log_debug "  secret_key: '$secret_key'"
     log_debug "  allowed_hosts: '$allowed_hosts'"
     log_debug "  debug_value: '$debug_value'"
+    log_debug "  aws_key: '$aws_key'"
+    log_debug "  aws_secret: '$aws_secret'"
+    log_debug "  aws_endpoint: '$aws_endpoint'"
     
     # Create the production config by replacing placeholders in the source file
     # The new sed pattern handles leading whitespace to preserve YAML indentation
     # Use a more robust approach: create the file line by line with proper YAML handling
     local temp_content=""
     
+    # Track if we're in the natiq-api environment section and if we've added AWS vars
+    local in_natiq_env=false
+    local aws_vars_added=false
+    local natiq_indent=""
+    
     while IFS= read -r line; do
         case "$line" in
+            *"natiq-api:"*)
+                # We're entering the natiq-api service section
+                in_natiq_env=false
+                aws_vars_added=false
+                temp_content+="$line"$'\n'
+                ;;
+            *"environment:"*)
+                # Check if this is the environment section for natiq-api
+                if [[ "$temp_content" == *"natiq-api:"* ]]; then
+                    in_natiq_env=true
+                    # Get the indentation level for environment section
+                    natiq_indent="${line%%[^[:space:]]*}"
+                fi
+                temp_content+="$line"$'\n'
+                ;;
             *"POSTGRES_USER:"*)
                 # Preserve indentation and replace value
                 local indent="${line%%[^[:space:]]*}"
@@ -422,11 +451,39 @@ create_production_config() {
                 local indent="${line%%[^[:space:]]*}"
                 temp_content+="${indent}FORCED_ALIGNMENT_SECRET_KEY: ${secret_key}"$'\n'
                 ;;
+
             *)
                 temp_content+="$line"$'\n'
                 ;;
         esac
+        
+        # After processing each line, check if we should add AWS variables
+        if [[ "$in_natiq_env" == "true" && "$aws_vars_added" == "false" ]]; then
+            # Look for the end of environment section or next service
+            if [[ "$line" =~ ^[[:space:]]*[a-zA-Z] ]] && [[ "$line" != *":"* ]] && [[ "$line" != *"-"* ]]; then
+                # We've reached the end of environment section, add AWS vars before this line
+                temp_content+="${natiq_indent}  AWS_ACCESS_KEY_ID: ${aws_key}"$'\n'
+                temp_content+="${natiq_indent}  AWS_SECRET_ACCESS_KEY: ${aws_secret}"$'\n'
+                temp_content+="${natiq_indent}  AWS_S3_ENDPOINT_URL: ${aws_endpoint}"$'\n'
+                aws_vars_added=true
+                in_natiq_env=false
+            elif [[ "$line" =~ ^[[:space:]]*[a-zA-Z].*: ]] && [[ "$line" != *"environment:"* ]]; then
+                # We've reached another section, add AWS vars before this line
+                temp_content+="${natiq_indent}  AWS_ACCESS_KEY_ID: ${aws_key}"$'\n'
+                temp_content+="${natiq_indent}  AWS_SECRET_ACCESS_KEY: ${aws_secret}"$'\n'
+                temp_content+="${natiq_indent}  AWS_S3_ENDPOINT_URL: ${aws_endpoint}"$'\n'
+                aws_vars_added=true
+                in_natiq_env=false
+            fi
+        fi
     done < "$source"
+    
+    # If we're still in natiq-api environment section at the end, add AWS vars
+    if [[ "$in_natiq_env" == "true" && "$aws_vars_added" == "false" ]]; then
+        temp_content+="${natiq_indent}  AWS_ACCESS_KEY_ID: ${aws_key}"$'\n'
+        temp_content+="${natiq_indent}  AWS_SECRET_ACCESS_KEY: ${aws_secret}"$'\n'
+        temp_content+="${natiq_indent}  AWS_S3_ENDPOINT_URL: ${aws_endpoint}"$'\n'
+    fi
     
     # Write to file without control characters
     printf '%s' "$temp_content" > "$temp_file"
@@ -438,6 +495,7 @@ create_production_config() {
     
     log_debug "Production config created at: $temp_file"
     log_debug "Generated credentials - DB: $db_user, RabbitMQ: $rabbit_user, Secret Key Length: ${#secret_key}"
+    log_debug "AWS credentials - Key: $aws_key, Endpoint: $aws_endpoint"
     log_info "Production configuration file created successfully"
     printf "%s" "$temp_file"
 }
@@ -543,8 +601,8 @@ cmd_install() {
     check_system || return 1
     check_internet || return 1
     
-    log_info "Updating package lists..."
-    if command_exists apt-get; then sudo apt-get update -qq; fi
+    # log_info "Updating package lists..."
+    # if command_exists apt-get; then sudo apt-get update -qq; fi
     
     setup_docker "$skip_docker" || return 1
     [[ "$skip_firewall" == "false" ]] && { setup_firewall || log_warning "Firewall setup failed"; }
@@ -560,6 +618,7 @@ cmd_install() {
     log_info "🔐 I have created a .env file with randomly generated secure values."
     log_info "📝 You can now choose to edit these values or use them as-is."
     log_info "💡 The .env file contains all the credentials and configuration needed for your API."
+    log_info "☁️  AWS/S3 configuration is included for cloud storage access."
     echo
     log_warning "⚠️  Important Notes:"
     log_warning "   • Any changes you make will be used in the final configuration"
@@ -601,6 +660,7 @@ cmd_install() {
     echo; echo -e "${GREEN}========================================\n🎉 Installation completed successfully!\n========================================${NC}"; echo
     log_info "🔐 Configuration Summary:"
     log_info "   • All credentials and settings have been applied from .env file"
+    log_info "   • AWS/S3 configuration has been configured for cloud storage"
     log_info "   • The .env file has been securely deleted for security"
     log_info "   • Your API is now configured and ready to use"
     echo
