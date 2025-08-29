@@ -134,7 +134,7 @@ create_env_file() {
     local secret_key=$(generate_secret 50)
     local django_allowed_hosts="$(get_public_ip)"
     local debug="0"
-    local forced_alignment_secret_key="$secret_key"  # Same as SECRET_KEY
+    local forced_alignment_secret_key=$(generate_secret 50)
     
     # Create .env file content
     cat > "$env_file" << EOF
@@ -156,6 +156,20 @@ SECRET_KEY=$secret_key
 DJANGO_ALLOWED_HOSTS=$django_allowed_hosts
 DEBUG=$debug
 FORCED_ALIGNMENT_SECRET_KEY=$forced_alignment_secret_key
+
+# Edit these values according to your AWS/S3-compatible storage configuration
+AWS_ACCESS_KEY_ID=example123
+AWS_SECRET_ACCESS_KEY=secretExample
+AWS_S3_ENDPOINT_URL=https://example.com
+
+# Maximum allowed size for client request body (file uploads)
+NGINX_CLIENT_MAX_BODY_SIZE=10M
+
+# Django Superuser Configuration
+# These credentials will be used to create the admin user automatically
+DJANGO_SUPERUSER_USERNAME=admin_$(generate_secret 8 | tr '[:upper:]' '[:lower:]')
+DJANGO_SUPERUSER_PASSWORD=$(generate_secret 20)
+DJANGO_SUPERUSER_EMAIL=example@gmail.com
 EOF
 
     # Set proper permissions (readable by owner only)
@@ -180,8 +194,8 @@ read_env_values() {
     source "$env_file"
     set +a  # turn off automatic export
     
-    # Return values as a pipe-separated string: db_user|db_pass|rabbit_user|rabbit_pass|secret_key|allowed_hosts|debug
-    printf "%s|%s|%s|%s|%s|%s|%s" "$POSTGRES_USER" "$POSTGRES_PASSWORD" "$RABBIT_USER" "$RABBITMQ_PASS" "$SECRET_KEY" "$DJANGO_ALLOWED_HOSTS" "$DEBUG"
+    # Return values as a pipe-separated string: db_user|db_pass|rabbit_user|rabbit_pass|secret_key|allowed_hosts|debug|forced_alignment_secret_key|aws_key|aws_secret|aws_endpoint|nginx_max_body|superuser_username|superuser_password|superuser_email
+    printf "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s" "$POSTGRES_USER" "$POSTGRES_PASSWORD" "$RABBIT_USER" "$RABBITMQ_PASS" "$SECRET_KEY" "$DJANGO_ALLOWED_HOSTS" "$DEBUG" "$FORCED_ALIGNMENT_SECRET_KEY" "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" "$AWS_S3_ENDPOINT_URL" "$NGINX_CLIENT_MAX_BODY_SIZE" "$DJANGO_SUPERUSER_USERNAME" "$DJANGO_SUPERUSER_PASSWORD" "$DJANGO_SUPERUSER_EMAIL"
 }
 
 # Securely delete .env file to prevent recovery
@@ -333,9 +347,69 @@ prompt_edit() {
     fi
 }
 
-
-
-
+# Process nginx.conf file to add/update client_max_body_size
+process_nginx_config() {
+    local nginx_file="$1"
+    local max_body_size="$2"
+    
+    [[ -f "$nginx_file" ]] || { log_error "Nginx config file not found: $nginx_file"; return 1; }
+    
+    log_debug "Processing nginx config: $nginx_file with max body size: $max_body_size"
+    
+    local temp_content=""
+    local in_server_block=false
+    local client_max_body_added=false
+    local server_indent=""
+    
+    # Read nginx.conf line by line
+    while IFS= read -r line; do
+        case "$line" in
+            *"server"*"{"*)
+                # Entering server block
+                in_server_block=true
+                server_indent="${line%%[^[:space:]]*}"
+                temp_content+="$line"$'\n'
+                ;;
+            *"client_max_body_size"*)
+                # Replace existing client_max_body_size
+                if [[ "$in_server_block" == "true" ]]; then
+                    local indent="${line%%[^[:space:]]*}"
+                    temp_content+="${indent}client_max_body_size ${max_body_size};"$'\n'
+                    client_max_body_added=true
+                else
+                    temp_content+="$line"$'\n'
+                fi
+                ;;
+            *"include mime.types;"*)
+                # After include mime.types, add client_max_body_size if not already added
+                temp_content+="$line"$'\n'
+                if [[ "$in_server_block" == "true" && "$client_max_body_added" == "false" ]]; then
+                    temp_content+="${server_indent}    client_max_body_size ${max_body_size};"$'\n'
+                    client_max_body_added=true
+                fi
+                ;;
+            *"}"*)
+                # Exiting server block
+                if [[ "$in_server_block" == "true" ]]; then
+                    in_server_block=false
+                    # If we haven't added client_max_body_size yet, add it before closing brace
+                    if [[ "$client_max_body_added" == "false" ]]; then
+                        temp_content+="${server_indent}    client_max_body_size ${max_body_size};"$'\n'
+                    fi
+                fi
+                temp_content+="$line"$'\n'
+                ;;
+            *)
+                temp_content+="$line"$'\n'
+                ;;
+        esac
+    done < "$nginx_file"
+    
+    # Write processed content back to nginx file
+    printf '%s' "$temp_content" > "$nginx_file"
+    
+    log_debug "Nginx config processed successfully"
+}
 
 # Create a temporary, production-ready compose file by injecting secrets from .env
 create_production_config() {
@@ -354,8 +428,8 @@ create_production_config() {
     [[ -n "$env_values" ]] || { log_error "Failed to read .env values"; return 1; }
     
     # Parse the returned values using pipe delimiter
-    local db_user db_pass rabbit_user rabbit_pass secret_key allowed_hosts debug_value
-    IFS='|' read -r db_user db_pass rabbit_user rabbit_pass secret_key allowed_hosts debug_value <<< "$env_values"
+    local db_user db_pass rabbit_user rabbit_pass secret_key allowed_hosts debug_value aws_key aws_secret aws_endpoint nginx_max_body superuser_username superuser_password superuser_email
+    IFS='|' read -r db_user db_pass rabbit_user rabbit_pass secret_key allowed_hosts debug_value aws_key aws_secret aws_endpoint nginx_max_body superuser_username superuser_password superuser_email <<< "$env_values"
     
     # Debug: check parsed values
     log_debug "Parsed values from .env:"
@@ -366,14 +440,40 @@ create_production_config() {
     log_debug "  secret_key: '$secret_key'"
     log_debug "  allowed_hosts: '$allowed_hosts'"
     log_debug "  debug_value: '$debug_value'"
+    log_debug "  aws_key: '$aws_key'"
+    log_debug "  aws_secret: '$aws_secret'"
+    log_debug "  aws_endpoint: '$aws_endpoint'"
+    log_debug "  nginx_max_body: '$nginx_max_body'"
+    log_debug "  superuser_username: '$superuser_username'"
+    log_debug "  superuser_email: '$superuser_email'"
     
     # Create the production config by replacing placeholders in the source file
     # The new sed pattern handles leading whitespace to preserve YAML indentation
     # Use a more robust approach: create the file line by line with proper YAML handling
     local temp_content=""
     
+    # Track if we're in the natiq-api environment section and if we've added AWS vars
+    local in_natiq_env=false
+    local aws_vars_added=false
+    local natiq_indent=""
+    
     while IFS= read -r line; do
         case "$line" in
+            *"natiq-api:"*)
+                # We're entering the natiq-api service section
+                in_natiq_env=false
+                aws_vars_added=false
+                temp_content+="$line"$'\n'
+                ;;
+            *"environment:"*)
+                # Check if this is the environment section for natiq-api
+                if [[ "$temp_content" == *"natiq-api:"* ]]; then
+                    in_natiq_env=true
+                    # Get the indentation level for environment section
+                    natiq_indent="${line%%[^[:space:]]*}"
+                fi
+                temp_content+="$line"$'\n'
+                ;;
             *"POSTGRES_USER:"*)
                 # Preserve indentation and replace value
                 local indent="${line%%[^[:space:]]*}"
@@ -420,13 +520,41 @@ create_production_config() {
                 ;;
             *"FORCED_ALIGNMENT_SECRET_KEY:"*)
                 local indent="${line%%[^[:space:]]*}"
-                temp_content+="${indent}FORCED_ALIGNMENT_SECRET_KEY: ${secret_key}"$'\n'
+                temp_content+="${indent}FORCED_ALIGNMENT_SECRET_KEY: ${forced_alignment_secret_key}"$'\n'
                 ;;
+
             *)
                 temp_content+="$line"$'\n'
                 ;;
         esac
+        
+        # After processing each line, check if we should add AWS variables
+        if [[ "$in_natiq_env" == "true" && "$aws_vars_added" == "false" ]]; then
+            # Look for the end of environment section or next service
+            if [[ "$line" =~ ^[[:space:]]*[a-zA-Z] ]] && [[ "$line" != *":"* ]] && [[ "$line" != *"-"* ]]; then
+                # We've reached the end of environment section, add AWS vars before this line
+                temp_content+="${natiq_indent}  AWS_ACCESS_KEY_ID: ${aws_key}"$'\n'
+                temp_content+="${natiq_indent}  AWS_SECRET_ACCESS_KEY: ${aws_secret}"$'\n'
+                temp_content+="${natiq_indent}  AWS_S3_ENDPOINT_URL: ${aws_endpoint}"$'\n'
+                aws_vars_added=true
+                in_natiq_env=false
+            elif [[ "$line" =~ ^[[:space:]]*[a-zA-Z].*: ]] && [[ "$line" != *"environment:"* ]]; then
+                # We've reached another section, add AWS vars before this line
+                temp_content+="${natiq_indent}  AWS_ACCESS_KEY_ID: ${aws_key}"$'\n'
+                temp_content+="${natiq_indent}  AWS_SECRET_ACCESS_KEY: ${aws_secret}"$'\n'
+                temp_content+="${natiq_indent}  AWS_S3_ENDPOINT_URL: ${aws_endpoint}"$'\n'
+                aws_vars_added=true
+                in_natiq_env=false
+            fi
+        fi
     done < "$source"
+    
+    # If we're still in natiq-api environment section at the end, add AWS vars
+    if [[ "$in_natiq_env" == "true" && "$aws_vars_added" == "false" ]]; then
+        temp_content+="${natiq_indent}  AWS_ACCESS_KEY_ID: ${aws_key}"$'\n'
+        temp_content+="${natiq_indent}  AWS_SECRET_ACCESS_KEY: ${aws_secret}"$'\n'
+        temp_content+="${natiq_indent}  AWS_S3_ENDPOINT_URL: ${aws_endpoint}"$'\n'
+    fi
     
     # Write to file without control characters
     printf '%s' "$temp_content" > "$temp_file"
@@ -438,6 +566,9 @@ create_production_config() {
     
     log_debug "Production config created at: $temp_file"
     log_debug "Generated credentials - DB: $db_user, RabbitMQ: $rabbit_user, Secret Key Length: ${#secret_key}"
+    log_debug "AWS credentials - Key: $aws_key, Endpoint: $aws_endpoint"
+    log_debug "Nginx max body size: $nginx_max_body"
+    log_debug "Django superuser - Username: $superuser_username, Email: $superuser_email"
     log_info "Production configuration file created successfully"
     printf "%s" "$temp_file"
 }
@@ -507,26 +638,74 @@ manage_containers() {
     local prod_config; prod_config=$(create_production_config "$env_file")
     [[ -n "$prod_config" ]] || { log_error "Failed to get production config path"; return 1; }
     
-    start_and_cleanup_containers "$prod_config"
+    # Process nginx config for restart/update commands
+    if [[ -f "$env_file" ]]; then
+        local nginx_max_body; nginx_max_body=$(grep "^NGINX_CLIENT_MAX_BODY_SIZE=" "$env_file" | cut -d'=' -f2)
+        if [[ -n "$nginx_max_body" ]]; then
+            log_info "Processing nginx configuration..."
+            if process_nginx_config "$PROJECT_FOLDER/$NGINX_FILE" "$nginx_max_body"; then
+                log_success "Nginx configuration updated with max body size: $nginx_max_body"
+            else
+                log_warning "Failed to update nginx configuration"
+            fi
+        else
+            log_warning "NGINX_CLIENT_MAX_BODY_SIZE not found in .env file, using default"
+            nginx_max_body="10M"
+            if process_nginx_config "$PROJECT_FOLDER/$NGINX_FILE" "$nginx_max_body"; then
+                log_success "Nginx configuration updated with default max body size: $nginx_max_body"
+            else
+                log_warning "Failed to update nginx configuration with default value"
+            fi
+        fi
+    else
+        log_warning ".env file not found, skipping nginx configuration update"
+    fi
+    
+    start_and_cleanup_containers "$prod_config" "$env_file"
 }
 
-# Create a Django superuser interactively
+# Create a Django superuser automatically using .env values
 create_superuser() {
-    log_info "Creating Django superuser..."
+    local env_file="$1"
     
-    local container_id; container_id=$(docker ps -q -f "ancestor=$DOCKER_IMAGE" | head -n 1)
-    [[ -z "$container_id" ]] && { log_error "API container not found"; return 1; }
+    log_info "Creating Django superuser automatically..."
     
-    echo
-    log_warning "You will now be connected to the container to create a superuser."
-    log_info "Please follow the prompts to set up your admin account."
-    sleep 3
+    # Check if .env file exists
+    if [[ ! -f "$env_file" ]]; then
+        log_error ".env file not found: $env_file"
+        log_warning "Cannot create superuser without .env file"
+        return 1
+    fi
     
-    if docker exec -it "$container_id" python3 manage.py createsuperuser; then
-        log_success "Superuser created successfully."
+    # Read superuser credentials from .env file
+    local superuser_username; superuser_username=$(grep "^DJANGO_SUPERUSER_USERNAME=" "$env_file" | cut -d'=' -f2)
+    local superuser_password; superuser_password=$(grep "^DJANGO_SUPERUSER_PASSWORD=" "$env_file" | cut -d'=' -f2)
+    local superuser_email; superuser_email=$(grep "^DJANGO_SUPERUSER_EMAIL=" "$env_file" | cut -d'=' -f2)
+    
+    if [[ -z "$superuser_username" || -z "$superuser_password" || -z "$superuser_email" ]]; then
+        log_error "Superuser credentials not found in .env file"
+        log_warning "Make sure DJANGO_SUPERUSER_USERNAME, DJANGO_SUPERUSER_PASSWORD, and DJANGO_SUPERUSER_EMAIL are set in .env"
+        return 1
+    fi
+    
+    log_info "Superuser credentials: Username: $superuser_username, Email: $superuser_email"
+    
+    # Use docker compose exec to create superuser
+    local compose_file="$PROJECT_FOLDER/$SOURCE_FILE"
+    if docker compose -f "$compose_file" exec -T natiq-api python3 manage.py shell -c "
+from django.contrib.auth import get_user_model;
+User = get_user_model();
+if not User.objects.filter(username='$superuser_username').exists():
+    User.objects.create_superuser('$superuser_username', '$superuser_email', '$superuser_password');
+    print('Superuser created successfully');
+else:
+    print('Superuser already exists');
+"; then
+        log_success "Superuser creation completed successfully."
+        log_info "You can now login with: Username: $superuser_username, Password: $superuser_password"
     else
         log_warning "Superuser creation failed or was cancelled."
-        log_info "You can create one later with: docker exec -it $container_id python3 manage.py createsuperuser"
+        log_info "You can create one manually later with: docker compose -f $compose_file exec natiq-api python3 manage.py createsuperuser"
     fi
 }
 
@@ -543,11 +722,11 @@ cmd_install() {
     check_system || return 1
     check_internet || return 1
     
-    log_info "Updating package lists..."
-    if command_exists apt-get; then sudo apt-get update -qq; fi
+    # log_info "Updating package lists..."
+    # if command_exists apt-get; then sudo apt-get update -qq; fi
     
-    setup_docker "$skip_docker" || return 1
-    [[ "$skip_firewall" == "false" ]] && { setup_firewall || log_warning "Firewall setup failed"; }
+    # setup_docker "$skip_docker" || return 1
+    # [[ "$skip_firewall" == "false" ]] && { setup_firewall || log_warning "Firewall setup failed"; }
     
     download_files || return 1
     
@@ -560,6 +739,9 @@ cmd_install() {
     log_info "🔐 I have created a .env file with randomly generated secure values."
     log_info "📝 You can now choose to edit these values or use them as-is."
     log_info "💡 The .env file contains all the credentials and configuration needed for your API."
+    log_info "☁️  AWS/S3 configuration is included for cloud storage access."
+    log_info "🌐 Nginx configuration includes customizable max body size for file uploads."
+    log_info "👤 Django superuser will be created automatically with credentials from .env"
     echo
     log_warning "⚠️  Important Notes:"
     log_warning "   • Any changes you make will be used in the final configuration"
@@ -593,14 +775,39 @@ cmd_install() {
     [[ -n "$prod_config" ]] || { log_error "Failed to create production config"; return 1; }
     
     prompt_edit "$prod_config" "production docker-compose configuration"
+    
+    # Process nginx.conf to add/update client_max_body_size
+    log_info "Processing nginx configuration..."
+    local nginx_max_body; nginx_max_body=$(grep "^NGINX_CLIENT_MAX_BODY_SIZE=" "$env_file" | cut -d'=' -f2)
+    if [[ -n "$nginx_max_body" ]]; then
+        if process_nginx_config "$PROJECT_FOLDER/$NGINX_FILE" "$nginx_max_body"; then
+            log_success "Nginx configuration updated with max body size: $nginx_max_body"
+        else
+            log_warning "Failed to update nginx configuration"
+        fi
+    else
+        log_warning "NGINX_CLIENT_MAX_BODY_SIZE not found in .env file, using default"
+        nginx_max_body="10M"
+        if process_nginx_config "$PROJECT_FOLDER/$NGINX_FILE" "$nginx_max_body"; then
+            log_success "Nginx configuration updated with default max body size: $nginx_max_body"
+        else
+            log_warning "Failed to update nginx configuration with default value"
+        fi
+    fi
+    
     prompt_edit "$PROJECT_FOLDER/$NGINX_FILE" "nginx configuration"
     
+    # Create superuser before cleaning up .env file
+    create_superuser "$env_file"
+    
     start_and_cleanup_containers "$prod_config" "$env_file" || return 1
-    create_superuser
     
     echo; echo -e "${GREEN}========================================\n🎉 Installation completed successfully!\n========================================${NC}"; echo
     log_info "🔐 Configuration Summary:"
     log_info "   • All credentials and settings have been applied from .env file"
+    log_info "   • AWS/S3 configuration has been configured for cloud storage"
+    log_info "   • Nginx max body size has been set to: $nginx_max_body"
+    log_info "   • Django superuser has been created automatically"
     log_info "   • The .env file has been securely deleted for security"
     log_info "   • Your API is now configured and ready to use"
     echo
@@ -612,6 +819,21 @@ cmd_install() {
     echo; log_info "🌐 Access your API at: http://$(get_public_ip)"
     log_info "📊 View logs: docker compose -f $PROJECT_FOLDER/$SOURCE_FILE logs -f"
     log_info "🛑 Stop services: docker compose -f $PROJECT_FOLDER/$SOURCE_FILE down"
+    
+    # Show superuser credentials if available
+    if [[ -f "$env_file" ]]; then
+        local superuser_username; superuser_username=$(grep "^DJANGO_SUPERUSER_USERNAME=" "$env_file" | cut -d'=' -f2 2>/dev/null || echo "")
+        local superuser_password; superuser_password=$(grep "^DJANGO_SUPERUSER_PASSWORD=" "$env_file" | cut -d'=' -f2 2>/dev/null || echo "")
+        if [[ -n "$superuser_username" && -n "$superuser_password" ]]; then
+            echo
+            log_info "👤 Django Admin Access:"
+            log_info "   • Username: $superuser_username"
+            log_info "   • Password: $superuser_password"
+            log_info "   • URL: http://$(get_public_ip)/admin"
+        fi
+    else
+        log_warning "⚠️  .env file not available, cannot show superuser credentials"
+    fi
 }
 
 # The restart command
