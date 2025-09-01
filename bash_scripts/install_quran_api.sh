@@ -4,7 +4,7 @@
 # Description: A script to set up and run the NatiqQuran API project using Docker.
 # It handles Docker installation, project folder setup, and initial configuration.
 # Features: Complete lifecycle management, user-friendly, enhanced security, comprehensive logging
-# Version: 2.4
+# Version: 2.5
 # Author: Natiq dev Team
 # Usage: bash setup.sh [COMMAND] [OPTIONS]
 #
@@ -21,16 +21,16 @@ IFS=$'\n\t'
 # ==============================================================================
 
 readonly SCRIPT_NAME="$(basename "$0")"
-readonly SCRIPT_VERSION="2.4"
+readonly SCRIPT_VERSION="2.5"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # --- Project Configuration ---
-readonly PROJECT_FOLDER="nq-api"
+readonly PROJECT_FOLDER="quran-api"
 readonly SOURCE_FILE="docker-compose.source.yaml"
 readonly PROD_FILE="docker-compose.prod.yaml"
 readonly NGINX_FILE="nginx.conf"
-readonly COMPOSE_URL="https://raw.githubusercontent.com/NatiqQuran/nq-api/main/docker-compose.yaml"
-readonly NGINX_URL="https://raw.githubusercontent.com/NatiqQuran/nq-api/main/nginx.conf"
+readonly COMPOSE_URL="https://raw.githubusercontent.com/NatiqQuran/quran-api/main/docker-compose.yaml"
+readonly NGINX_URL="https://raw.githubusercontent.com/NatiqQuran/quran-api/main/nginx.conf"
 readonly DOCKER_IMAGE="natiqquran/nq-api:latest"
 readonly MIN_DOCKER_VERSION="20.10.0"
 readonly TIMEOUT=15
@@ -71,9 +71,7 @@ log_debug() { [[ "${DEBUG:-0}" == "1" ]] && echo -e "${PURPLE}🐛 $*${NC}" >&2 
 command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
-validate_url() {
-    curl --connect-timeout 10 --max-time 30 -fsSL --head "$1" >/dev/null 2>&1
-}
+
 check_internet() {
     log_info "Checking internet connectivity..."
     if ping -c 1 -W 5 8.8.8.8 >/dev/null 2>&1; then
@@ -311,9 +309,6 @@ download_files() {
     mkdir -p "$PROJECT_FOLDER"
     
     log_info "Downloading configuration files from GitHub..."
-    validate_url "$COMPOSE_URL" || { log_error "Cannot access compose file URL"; return 1; }
-    validate_url "$NGINX_URL" || { log_error "Cannot access nginx config URL"; return 1; }
-    
     curl -fsSL "$COMPOSE_URL" -o "$PROJECT_FOLDER/$SOURCE_FILE" || { log_error "Failed to download compose file"; return 1; }
     curl -fsSL "$NGINX_URL" -o "$PROJECT_FOLDER/$NGINX_FILE" || { log_error "Failed to download nginx config"; return 1; }
     
@@ -356,59 +351,13 @@ process_nginx_config() {
     
     log_debug "Processing nginx config: $nginx_file with max body size: $max_body_size"
     
-    local temp_content=""
-    local in_server_block=false
-    local client_max_body_added=false
-    local server_indent=""
+    # First, remove any existing client_max_body_size lines
+    sed -i '/client_max_body_size/d' "$nginx_file"
     
-    # Read nginx.conf line by line
-    while IFS= read -r line; do
-        case "$line" in
-            *"server"*"{"*)
-                # Entering server block
-                in_server_block=true
-                server_indent="${line%%[^[:space:]]*}"
-                temp_content+="$line"$'\n'
-                ;;
-            *"client_max_body_size"*)
-                # Replace existing client_max_body_size
-                if [[ "$in_server_block" == "true" ]]; then
-                    local indent="${line%%[^[:space:]]*}"
-                    temp_content+="${indent}client_max_body_size ${max_body_size};"$'\n'
-                    client_max_body_added=true
-                else
-                    temp_content+="$line"$'\n'
-                fi
-                ;;
-            *"include mime.types;"*)
-                # After include mime.types, add client_max_body_size if not already added
-                temp_content+="$line"$'\n'
-                if [[ "$in_server_block" == "true" && "$client_max_body_added" == "false" ]]; then
-                    temp_content+="${server_indent}    client_max_body_size ${max_body_size};"$'\n'
-                    client_max_body_added=true
-                fi
-                ;;
-            *"}"*)
-                # Exiting server block
-                if [[ "$in_server_block" == "true" ]]; then
-                    in_server_block=false
-                    # If we haven't added client_max_body_size yet, add it before closing brace
-                    if [[ "$client_max_body_added" == "false" ]]; then
-                        temp_content+="${server_indent}    client_max_body_size ${max_body_size};"$'\n'
-                    fi
-                fi
-                temp_content+="$line"$'\n'
-                ;;
-            *)
-                temp_content+="$line"$'\n'
-                ;;
-        esac
-    done < "$nginx_file"
+    # Then add client_max_body_size after include mime.types;
+    sed -i "/include mime.types;/a\    client_max_body_size ${max_body_size};" "$nginx_file"
     
-    # Write processed content back to nginx file
-    printf '%s' "$temp_content" > "$nginx_file"
-    
-    log_debug "Nginx config processed successfully"
+    log_success "Added client_max_body_size ${max_body_size} after include mime.types;"
 }
 
 # Create a temporary, production-ready compose file by injecting secrets from .env
@@ -428,8 +377,8 @@ create_production_config() {
     [[ -n "$env_values" ]] || { log_error "Failed to read .env values"; return 1; }
     
     # Parse the returned values using pipe delimiter
-    local db_user db_pass rabbit_user rabbit_pass secret_key allowed_hosts debug_value aws_key aws_secret aws_endpoint nginx_max_body superuser_username superuser_password superuser_email
-    IFS='|' read -r db_user db_pass rabbit_user rabbit_pass secret_key allowed_hosts debug_value aws_key aws_secret aws_endpoint nginx_max_body superuser_username superuser_password superuser_email <<< "$env_values"
+    local db_user db_pass rabbit_user rabbit_pass secret_key allowed_hosts debug_value forced_alignment_secret_key aws_key aws_secret aws_endpoint nginx_max_body superuser_username superuser_password superuser_email
+    IFS='|' read -r db_user db_pass rabbit_user rabbit_pass secret_key allowed_hosts debug_value forced_alignment_secret_key aws_key aws_secret aws_endpoint nginx_max_body superuser_username superuser_password superuser_email <<< "$env_values"
     
     # Debug: check parsed values
     log_debug "Parsed values from .env:"
@@ -440,6 +389,7 @@ create_production_config() {
     log_debug "  secret_key: '$secret_key'"
     log_debug "  allowed_hosts: '$allowed_hosts'"
     log_debug "  debug_value: '$debug_value'"
+    log_debug "  forced_alignment_secret_key: '$forced_alignment_secret_key'"
     log_debug "  aws_key: '$aws_key'"
     log_debug "  aws_secret: '$aws_secret'"
     log_debug "  aws_endpoint: '$aws_endpoint'"
@@ -448,8 +398,6 @@ create_production_config() {
     log_debug "  superuser_email: '$superuser_email'"
     
     # Create the production config by replacing placeholders in the source file
-    # The new sed pattern handles leading whitespace to preserve YAML indentation
-    # Use a more robust approach: create the file line by line with proper YAML handling
     local temp_content=""
     
     # Track if we're in the natiq-api environment section and if we've added AWS vars
@@ -503,12 +451,13 @@ create_production_config() {
                 local indent="${line%%[^[:space:]]*}"
                 temp_content+="${indent}CELERY_BROKER_URL: amqp://${rabbit_user}:${rabbit_pass}@rabbitmq:5672//"$'\n'
                 ;;
+            *"FORCED_ALIGNMENT_SECRET_KEY:"*)
+                local indent="${line%%[^[:space:]]*}"
+                temp_content+="${indent}FORCED_ALIGNMENT_SECRET_KEY: ${forced_alignment_secret_key}"$'\n'
+                ;;
             *"SECRET_KEY:"*)
                 local indent="${line%%[^[:space:]]*}"
-                # Only add SECRET_KEY once
-                if [[ "$temp_content" != *"SECRET_KEY:"* ]]; then
-                    temp_content+="${indent}SECRET_KEY: ${secret_key}"$'\n'
-                fi
+                temp_content+="${indent}SECRET_KEY: ${secret_key}"$'\n'
                 ;;
             *"DJANGO_ALLOWED_HOSTS:"*)
                 local indent="${line%%[^[:space:]]*}"
@@ -517,10 +466,6 @@ create_production_config() {
             *"DEBUG:"*)
                 local indent="${line%%[^[:space:]]*}"
                 temp_content+="${indent}DEBUG: ${debug_value}"$'\n'
-                ;;
-            *"FORCED_ALIGNMENT_SECRET_KEY:"*)
-                local indent="${line%%[^[:space:]]*}"
-                temp_content+="${indent}FORCED_ALIGNMENT_SECRET_KEY: ${forced_alignment_secret_key}"$'\n'
                 ;;
 
             *)
@@ -593,11 +538,6 @@ start_and_cleanup_containers() {
         log_debug "Cleaning up production config file: $prod_config"
         rm -f "$prod_config"
         
-        # Securely clean up .env file after successful container start
-        if [[ -n "$env_file" ]]; then
-            secure_cleanup_env "$env_file"
-        fi
-        
         log_info "Waiting ${WAIT_TIME}s for services to initialize..."
         sleep "$WAIT_TIME"
         return 0
@@ -608,11 +548,115 @@ start_and_cleanup_containers() {
         log_debug "Cleaning up production config file: $prod_config"
         rm -f "$prod_config"
         
-        # Securely clean up .env file even on failure
-        if [[ -n "$env_file" ]]; then
-            secure_cleanup_env "$env_file"
-        fi
+        return 1
+    fi
+}
+
+# Cleanup .env file after restart/update operations with user confirmation
+cleanup_env_after_operation() {
+    local env_file="$1"
+    local operation="$2"  # "restart" or "update"
+    
+    # Only cleanup if file was created during this operation
+    if [[ ! -f "$env_file" ]]; then
+        log_debug ".env file already cleaned up or doesn't exist"
+        return 0
+    fi
+    
+    log_warning "Security notice: The .env file contains sensitive information (passwords, secret keys, etc.)"
+    log_info "This file was created during the $operation operation for configuration purposes."
+    log_info "For security reasons, we recommend removing it after use."
+    
+    # Ask user if they want to keep the file
+    local response
+    read -p "Do you want to keep the .env file? (y/N): " -t 30 response
+    
+    # Default to 'N' if no response or timeout (more secure default)
+    response="${response:-N}"
+    
+    if [[ "$response" =~ ^[Yy]$ ]]; then
+        log_info "Keeping .env file as requested: $env_file"
+        log_warning "⚠️  Remember: This file contains sensitive information. Keep it secure!"
+        return 0
+    else
+        log_info "Securely removing .env file..."
+        secure_cleanup_env "$env_file"
+        log_success ".env file securely removed"
+        return 0
+    fi
+}
+
+# Create .env file interactively if missing (for restart/update commands)
+create_env_file_interactive() {
+    local env_file="$1"
+    
+    # Check if .env file exists
+    if [[ -f "$env_file" ]]; then
+        log_debug ".env file already exists: $env_file"
+        return 0
+    fi
+    
+    log_warning ".env file not found: $env_file"
+    log_info "This file is required for restart/update operations."
+    log_info "It contains database credentials, secret keys, and other configuration values."
+    
+    # Ask user if they want to create a new .env file
+    local response
+    read -p "Do you want to create a new .env file with sample values? (Y/n): " -t 30 response
+    
+    # Default to 'Y' if no response or timeout
+    response="${response:-Y}"
+    
+    if [[ "$response" =~ ^[Yy]$ ]]; then
+        log_info "Creating new .env file with sample values..."
         
+        # Create .env file with sample values
+        create_env_file "$env_file"
+        
+        if [[ -f "$env_file" ]]; then
+            log_success ".env file created successfully"
+            
+            # Ask user if they want to edit the file
+            read -p "Do you want to edit the .env file now? (Y/n): " -t 30 response
+            response="${response:-Y}"
+            
+            if [[ "$response" =~ ^[Yy]$ ]]; then
+                log_info "Opening .env file for editing..."
+                
+                # Try to find a suitable editor
+                local editor=""
+                for ed in nano vim vi; do
+                    if command_exists "$ed"; then
+                        editor="$ed"
+                        break
+                    fi
+                done
+                
+                if [[ -n "$editor" ]]; then
+                    log_info "Opening with $editor..."
+                    if "$editor" "$env_file"; then
+                        log_success "File editing completed"
+                    else
+                        log_warning "File editing was cancelled or failed"
+                    fi
+                else
+                    log_warning "No suitable editor found (nano/vim/vi)"
+                    log_info "You can manually edit the file later: $env_file"
+                fi
+            else
+                log_info "Skipping file editing. You can edit manually later: $env_file"
+            fi
+            
+            # Mark that we created a new file (for cleanup later)
+            echo "true" > "/tmp/env_created_$$"
+            
+            return 0
+        else
+            log_error "Failed to create .env file"
+            return 1
+        fi
+    else
+        log_error "Operation cancelled by user"
         return 1
     fi
 }
@@ -664,6 +708,65 @@ manage_containers() {
     start_and_cleanup_containers "$prod_config" "$env_file"
 }
 
+# Wait for services to be ready before creating superuser
+wait_for_services() {
+    log_info "Waiting for services to be ready..."
+    
+    # Wait for database to be ready
+    log_info "Waiting for database to be ready..."
+    local db_ready=false
+    local max_attempts=30
+    local attempt=1
+    
+    while [[ "$db_ready" == "false" && $attempt -le $max_attempts ]]; do
+        if docker compose -f "$PROJECT_FOLDER/$SOURCE_FILE" exec -T postgres-db pg_isready -U postgres >/dev/null 2>&1; then
+            db_ready=true
+            log_success "Database is ready"
+        else
+            log_info "Database not ready yet (attempt $attempt/$max_attempts), waiting 5s..."
+            sleep 5
+            ((attempt++))
+        fi
+    done
+    
+    if [[ "$db_ready" == "false" ]]; then
+        log_error "Database failed to become ready after $max_attempts attempts"
+        return 1
+    fi
+    
+    # Wait for Django container to be ready
+    log_info "Waiting for Django container to be ready..."
+    local django_ready=false
+    attempt=1
+    
+    while [[ "$django_ready" == "false" && $attempt -le $max_attempts ]]; do
+        if docker compose -f "$PROJECT_FOLDER/$SOURCE_FILE" exec -T natiq-api python3 -c "import django; print('Django ready')" >/dev/null 2>&1; then
+            django_ready=true
+            log_success "Django container is ready"
+        else
+            log_info "Django container not ready yet (attempt $attempt/$max_attempts), waiting 5s..."
+            sleep 5
+            ((attempt++))
+        fi
+    done
+    
+    if [[ "$django_ready" == "false" ]]; then
+        log_error "Django container failed to become ready after $max_attempts attempts"
+        return 1
+    fi
+    
+    # Run migrations
+    log_info "Running database migrations..."
+    if docker compose -f "$PROJECT_FOLDER/$SOURCE_FILE" exec -T natiq-api python3 manage.py migrate --noinput; then
+        log_success "Database migrations completed successfully"
+    else
+        log_error "Database migrations failed"
+        return 1
+    fi
+    
+    log_success "All services are ready"
+}
+
 # Create a Django superuser automatically using .env values
 create_superuser() {
     local env_file="$1"
@@ -687,9 +790,7 @@ create_superuser() {
         log_warning "Make sure DJANGO_SUPERUSER_USERNAME, DJANGO_SUPERUSER_PASSWORD, and DJANGO_SUPERUSER_EMAIL are set in .env"
         return 1
     fi
-    
-    log_info "Superuser credentials: Username: $superuser_username, Email: $superuser_email"
-    
+        
     # Use docker compose exec to create superuser
     local compose_file="$PROJECT_FOLDER/$SOURCE_FILE"
     if docker compose -f "$compose_file" exec -T natiq-api python3 manage.py shell -c "
@@ -702,7 +803,6 @@ else:
     print('Superuser already exists');
 "; then
         log_success "Superuser creation completed successfully."
-        log_info "You can now login with: Username: $superuser_username, Password: $superuser_password"
     else
         log_warning "Superuser creation failed or was cancelled."
         log_info "You can create one manually later with: docker compose -f $compose_file exec natiq-api python3 manage.py createsuperuser"
@@ -713,8 +813,6 @@ else:
 # === MAIN COMMANDS & VALIDATION
 # ==============================================================================
 
-
-
 # The main installation command
 cmd_install() {
     local skip_docker="$1" skip_firewall="$2"
@@ -722,11 +820,11 @@ cmd_install() {
     check_system || return 1
     check_internet || return 1
     
-    # log_info "Updating package lists..."
-    # if command_exists apt-get; then sudo apt-get update -qq; fi
+    log_info "Updating package lists..."
+    if command_exists apt-get; then sudo apt-get update -qq; fi
     
-    # setup_docker "$skip_docker" || return 1
-    # [[ "$skip_firewall" == "false" ]] && { setup_firewall || log_warning "Firewall setup failed"; }
+    setup_docker "$skip_docker" || return 1
+    [[ "$skip_firewall" == "false" ]] && { setup_firewall || log_warning "Firewall setup failed"; }
     
     download_files || return 1
     
@@ -743,7 +841,7 @@ cmd_install() {
     log_info "🌐 Nginx configuration includes customizable max body size for file uploads."
     log_info "👤 Django superuser will be created automatically with credentials from .env"
     echo
-    log_warning "⚠️  Important Notes:"
+    log_warning "  Important Notes:"
     log_warning "   • Any changes you make will be used in the final configuration"
     log_warning "   • This file will be securely deleted after deployment"
     log_warning "   • Make sure to save your credentials securely - they cannot be recovered!"
@@ -797,10 +895,18 @@ cmd_install() {
     
     prompt_edit "$PROJECT_FOLDER/$NGINX_FILE" "nginx configuration"
     
-    # Create superuser before cleaning up .env file
+    # Start containers first
+    start_and_cleanup_containers "$prod_config" "$env_file" || return 1
+    
+    # Wait for services to be ready before creating superuser
+    wait_for_services || { log_error "Services failed to become ready"; return 1; }
+    
+    # Create superuser after services are ready
     create_superuser "$env_file"
     
-    start_and_cleanup_containers "$prod_config" "$env_file" || return 1
+    # Clean up .env file after superuser creation
+    log_info "Cleaning up .env file..."
+    secure_cleanup_env "$env_file"
     
     echo; echo -e "${GREEN}========================================\n🎉 Installation completed successfully!\n========================================${NC}"; echo
     log_info "🔐 Configuration Summary:"
@@ -811,7 +917,7 @@ cmd_install() {
     log_info "   • The .env file has been securely deleted for security"
     log_info "   • Your API is now configured and ready to use"
     echo
-    log_warning "⚠️  Security Reminder:"
+    log_warning "  Security Reminder:"
     log_warning "   • Make sure to save your credentials securely"
     log_warning "   • The .env file cannot be recovered"
     log_warning "   • Keep your credentials in a safe place"
@@ -819,37 +925,46 @@ cmd_install() {
     echo; log_info "🌐 Access your API at: http://$(get_public_ip)"
     log_info "📊 View logs: docker compose -f $PROJECT_FOLDER/$SOURCE_FILE logs -f"
     log_info "🛑 Stop services: docker compose -f $PROJECT_FOLDER/$SOURCE_FILE down"
-    
-    # Show superuser credentials if available
-    if [[ -f "$env_file" ]]; then
-        local superuser_username; superuser_username=$(grep "^DJANGO_SUPERUSER_USERNAME=" "$env_file" | cut -d'=' -f2 2>/dev/null || echo "")
-        local superuser_password; superuser_password=$(grep "^DJANGO_SUPERUSER_PASSWORD=" "$env_file" | cut -d'=' -f2 2>/dev/null || echo "")
-        if [[ -n "$superuser_username" && -n "$superuser_password" ]]; then
-            echo
-            log_info "👤 Django Admin Access:"
-            log_info "   • Username: $superuser_username"
-            log_info "   • Password: $superuser_password"
-            log_info "   • URL: http://$(get_public_ip)/admin"
-        fi
-    else
-        log_warning "⚠️  .env file not available, cannot show superuser credentials"
-    fi
 }
 
 # The restart command
 cmd_restart() {
     local env_file="$PROJECT_FOLDER/.env"
-    [[ -f "$env_file" ]] || { log_error ".env file not found. Run 'install' first."; return 1; }
+    local env_was_created=false
+    
+    # Check if .env file exists, create interactively if missing
+    if [[ ! -f "$env_file" ]]; then
+        create_env_file_interactive "$env_file" || return 1
+        env_was_created=true
+    fi
+    
     manage_containers "restart" "$env_file"
     log_success "🎉 Services restarted successfully!"
+    
+    # Cleanup .env file if it was created during this operation
+    if [[ "$env_was_created" == "true" ]]; then
+        cleanup_env_after_operation "$env_file" "restart"
+    fi
 }
 
 # The update command
 cmd_update() {
     local env_file="$PROJECT_FOLDER/.env"
-    [[ -f "$env_file" ]] || { log_error ".env file not found. Run 'install' first."; return 1; }
+    local env_was_created=false
+    
+    # Check if .env file exists, create interactively if missing
+    if [[ ! -f "$env_file" ]]; then
+        create_env_file_interactive "$env_file" || return 1
+        env_was_created=true
+    fi
+    
     manage_containers "update" "$env_file"
     log_success "🎉 Services updated successfully!"
+    
+    # Cleanup .env file if it was created during this operation
+    if [[ "$env_was_created" == "true" ]]; then
+        cleanup_env_after_operation "$env_file" "update"
+    fi
 }
 
 # ==============================================================================
@@ -866,8 +981,8 @@ USAGE:
 
 COMMANDS:
     install    (Default) Run full installation and setup (default)
-    restart    Restart all services (requires existing .env file)
-    update     Pull the latest images and restart (requires existing .env file)
+    restart    Restart all services (creates .env interactively if missing)
+    update     Pull the latest images and restart (creates .env interactively if missing)
 
 OPTIONS FOR (install):
     --no-install        (Optional) Skip Docker installation
