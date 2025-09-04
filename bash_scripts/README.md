@@ -5,11 +5,10 @@
 [![Version](https://img.shields.io/badge/version-2.5-blue.svg)](https://github.com/NatiqQuran/nq-scripts/blob/main/bash_scripts/install_quran_api.sh)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Shell](https://img.shields.io/badge/shell-Bash-4EAA25.svg)](https://www.gnu.org/software/bash/)
-[![Docker](https://img.shields.io/badge/docker-20.10.0+-2496ED.svg)](https://www.docker.com/)
 
 </div>
 
-> 🕌 **Production-ready automated setup for NatiqQuran API with comprehensive security and lifecycle management**
+> **Production-ready automated setup for NatiqQuran API with comprehensive security and lifecycle management**
 
 A sophisticated bash script that provides complete installation, configuration, and management of the NatiqQuran API project. Features automatic credential generation, interactive configuration, secure cleanup, and production-ready deployment.
 
@@ -31,10 +30,10 @@ A sophisticated bash script that provides complete installation, configuration, 
 - [Quick Start](#-quick-start)
 - [Installation Methods](#-installation-methods)
 - [Usage & Commands](#-usage--commands)
-- [Configuration](#-configuration)
-- [Commands](#commands)
+- [Configuration](#%EF%B8%8F-configuration)
+- [Commands](#-commands)
 - [Security Features](#-security-features)
-- [Management](#-management)
+- [Management](#%EF%B8%8F-management)
 - [Troubleshooting](#-troubleshooting)
 - [Contributing](#-contributing)
 
@@ -323,10 +322,10 @@ docker compose -f quran-api/docker-compose.source.yaml ps
 docker compose -f quran-api/docker-compose.source.yaml down
 
 # Restart services (preserves data)
-./install_quran_api.sh restart
+bash install_quran_api.sh restart
 
 # Update to latest version
-./install_quran_api.sh update
+bash install_quran_api.sh update
 ```
 
 ### Health Checks
@@ -485,7 +484,6 @@ DEBUG=1 ./bash_scripts/install_quran_api.sh
 
 - [NatiqQuran API Documentation](https://github.com/NatiqQuran/quran-api)
 - [Docker Official Documentation](https://hub.docker.com/r/natiqquran/nq-api)
-- [Django Project Documentation](https://docs.djangoproject.com/)
 - [Nginx Configuration Guide](https://nginx.org/en/docs/)
 
 ---
@@ -494,8 +492,8 @@ DEBUG=1 ./bash_scripts/install_quran_api.sh
 
 **Made with ❤️ by the NatiqQuran Development Team**
 
-[![GitHub Stars](https://img.shields.io/github/stars/NatiqQuran/quran-api?style=social)](https://github.com/NatiqQuran/quran-api/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/NatiqQuran/quran-api?style=social)](https://github.com/NatiqQuran/quran-api/network/members)
+[![GitHub Stars](https://img.shields.io/github/stars/natiq-foundation/nq-scripts?style=social)](https://github.com/natiq-foundation/nq-scripts/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/natiq-foundation/nq-scripts?style=social)](https://github.com/natiq-foundation/nq-scripts/network/members)
 
 [🌟 Star on GitHub](https://github.com/NatiqQuran/quran-api) • [🐛 Report Issues](https://github.com/NatiqQuran/quran-api/issues) • [💡 Request Features](https://github.com/NatiqQuran/quran-api/issues/new)
 
